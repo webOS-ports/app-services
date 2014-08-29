@@ -5,7 +5,6 @@
 	"operations": {
 		"create": "allow",
 		"read": "allow",
-		"write": "allow",
 		"update": "allow",
 		"delete": "allow"
 	}
