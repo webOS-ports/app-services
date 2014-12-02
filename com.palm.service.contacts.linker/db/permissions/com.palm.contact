@@ -30,6 +30,17 @@
 	{
 		"type": "db.kind",
 		"object": "com.palm.contact:1",
+		"caller": "org.webosports.app.contacts",
+		"operations": {
+			"read": "allow",
+			"create": "allow",
+			"delete": "allow",
+			"update": "allow"
+		}
+	},
+	{
+		"type": "db.kind",
+		"object": "com.palm.contact:1",
 		"caller": "com.palm.app.enyo-contacts",
 		"operations": {
 			"read": "allow",
@@ -61,6 +72,14 @@
 		"type": "db.kind",
 		"object": "com.palm.contact:1",
 		"caller": "com.palm.*",
+		"operations": {
+			"read": "allow"
+		}
+	},
+	{
+		"type": "db.kind",
+		"object": "com.palm.contact:1",
+		"caller": "org.webosports.*",
 		"operations": {
 			"read": "allow"
 		}

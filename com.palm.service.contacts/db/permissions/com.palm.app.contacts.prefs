@@ -24,6 +24,17 @@
 	{
 		"type": "db.kind",
 		"object": "com.palm.app.contacts.prefs:1",
+		"caller": "org.webosports.app.contacts",
+		"operations": {
+			"read": "allow",
+			"create": "allow",
+			"delete": "allow",
+			"update": "allow"
+		}
+	},
+	{
+		"type": "db.kind",
+		"object": "com.palm.app.contacts.prefs:1",
 		"caller": "com.palm.service.contacts",
 		"operations": {
 			"read": "allow",
