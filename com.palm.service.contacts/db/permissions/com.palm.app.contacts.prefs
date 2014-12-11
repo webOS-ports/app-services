@@ -39,5 +39,13 @@
 		"operations": {
 			"read": "allow"
 		}
+	},
+		{
+		"type": "db.kind",
+		"object": "com.palm.app.contacts.prefs:1",
+		"caller": "org.webosports.*",
+		"operations": {
+			"read": "allow"
+		}
 	}
 ]
