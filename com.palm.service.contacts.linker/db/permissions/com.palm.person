@@ -28,6 +28,16 @@
 	{
 		"type": "db.kind",
 		"object": "com.palm.person:1",
+		"caller": "org.webosports.app.contacts",
+		"operations": {
+			"read": "allow",
+			"create": "allow",
+			"update": "allow"
+		}
+	},
+	{
+		"type": "db.kind",
+		"object": "com.palm.person:1",
 		"caller": "com.palm.app.enyo-contacts",
 		"operations": {
 			"read": "allow",
