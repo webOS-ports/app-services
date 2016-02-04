@@ -88,6 +88,23 @@ function LinkerAssistant() {
 				"name": "globalization",
 				"version": "1.0"
 			})).globalization.Globalization;
+
+			ContactsLib = (MojoLoader.require({ "name": "contacts", "version": "1.0"})).contacts;
+			Person = ContactsLib.Person;
+			Contact = ContactsLib.Contact;
+			ContactLinkable = ContactsLib.ContactLinkable;
+			PersonFactory = ContactsLib.PersonFactory;
+			ContactFactory = ContactsLib.ContactFactory;
+			Name = ContactsLib.Name;
+			EmailAddress = ContactsLib.EmailAddress;
+			PhoneNumber = ContactsLib.PhoneNumber;
+			IMAddress = ContactsLib.IMAddress;
+			ContactPluralField = ContactsLib.ContactPluralField;
+			ContactsUtils = ContactsLib.Utils;
+			TimingRecorder = ContactsLib.Utils.TimingRecorder;
+
+			timingRecorder = new TimingRecorder(RECORD_TIMINGS_FOR_SPEED, process);
+			Autolinker._initializeQuerries();
 		} catch (e) {
 			console.log("Error: failed to load Globalization: " + e.message);
 		}
@@ -473,7 +490,7 @@ var autolinker = autolinker || new Autolinker();
 var jobIdGenerator = jobIdGenerator || new JobIdGenerator();
 var yieldController = yieldController || new YieldController();
 var autoLinkerRunning = autoLinkerRunning || false;
-var timingRecorder = new TimingRecorder(RECORD_TIMINGS_FOR_SPEED, process);
+var timingRecorder;
 
 //
 // Autolinker hack on boot method. Please take me out when done!!!!!!!!

@@ -27,6 +27,33 @@ function Autolinker() {
 	// var personID = "";
 }
 
+//initializes querry variables after contacts lib is loaded.
+Autolinker._initializeQuerries = function () {
+	Autolinker.SIMILAR_PHONENUMBER_QUERY = {
+		"from": Person.kind,
+		"where": [{
+			"prop": "phoneNumbers.normalizedValue",
+			"op": "%"
+		}]
+	};
+
+	Autolinker.SIMILARIMQUERY = {
+		"from": Person.kind,
+		"where": [{
+			"prop": "ims.normalizedValue",
+			"op": "="
+		}]
+	};
+
+	Autolinker.SIMILAREMAILQUERY = {
+		"from": Person.kind,
+		"where": [{
+			"prop": "emails.normalizedValue",
+			"op": "="
+		}]
+	};
+};
+
 // This is called as the result of a luna-send to force a re-autolink of all the contacts
 Autolinker.prototype.forceAutolink = function (controller, jobId) {
 	var future = new Future();
@@ -233,14 +260,6 @@ Autolinker.similarName = function (person, contactToAutoLink, currentWeights) {
 	});
 	
 	return future;
-};
-
-Autolinker.SIMILAR_PHONENUMBER_QUERY = {
-	"from": Person.kind,
-	"where": [{
-		"prop": "phoneNumbers.normalizedValue",
-		"op": "%"
-	}]
 };
 
 Autolinker.addPhoneNumberToQuery = function (queries, phoneNumber) {
@@ -471,14 +490,6 @@ Autolinker.getPrefixNumberMapping = function (linkedPhoneNumbers, newPersonNumbe
 	return toReturn;
 };
 
-Autolinker.SIMILAREMAILQUERY = {
-	"from": Person.kind,
-	"where": [{
-		"prop": "emails.normalizedValue",
-		"op": "="
-	}]
-};
-
 Autolinker.similarEmail = function (person, contactToAutoLink, currentWeights) {
 	var future = new Future();
 	
@@ -529,14 +540,6 @@ Autolinker.similarEmail = function (person, contactToAutoLink, currentWeights) {
 	});
 	
 	return future;
-};
-
-Autolinker.SIMILARIMQUERY = {
-	"from": Person.kind,
-	"where": [{
-		"prop": "ims.normalizedValue",
-		"op": "="
-	}]
 };
 
 Autolinker.similarIM = function (person, contactToAutoLink, currentWeights) {
