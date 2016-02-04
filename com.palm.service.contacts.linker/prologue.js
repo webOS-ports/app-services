@@ -22,24 +22,24 @@ regexp: true, newcap: true, immed: true, nomen: false, maxerr: 500 */
 
 var Foundations = IMPORTS.foundations,
 	_ = IMPORTS.underscore._,
-	ContactsLib = IMPORTS.contacts,
-	Person = ContactsLib.Person,
-	Contact = ContactsLib.Contact,
-	ContactLinkable = ContactsLib.ContactLinkable,
-	PersonFactory = ContactsLib.PersonFactory,
-	ContactFactory = ContactsLib.ContactFactory,
-	Name = ContactsLib.Name,
-	EmailAddress = ContactsLib.EmailAddress,
-	PhoneNumber = ContactsLib.PhoneNumber,
-	IMAddress = ContactsLib.IMAddress,
-	ContactPluralField = ContactsLib.ContactPluralField,
+	ContactsLib,
+	Person,
+	Contact,
+	ContactLinkable,
+	PersonFactory,
+	ContactFactory,
+	Name,
+	EmailAddress,
+	PhoneNumber,
+	IMAddress,
+	ContactPluralField,
 	DB = Foundations.Data.DB,
 	PalmCall = Foundations.Comms.PalmCall,
 	Future = Foundations.Control.Future,
-	ContactsUtils = ContactsLib.Utils,
+	ContactsUtils,
 	Assert = Foundations.Assert,
 	IO = IMPORTS["foundations.io"],
-	TimingRecorder = ContactsLib.Utils.TimingRecorder;
+	TimingRecorder;
 
 if (typeof require === "undefined") {
 	require = IMPORTS.require;
