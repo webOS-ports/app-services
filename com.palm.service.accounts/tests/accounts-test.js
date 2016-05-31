@@ -23,7 +23,8 @@ regexp: true, newcap: true, immed: true, nomen: false, maxerr: 500 */
 
 var webos = IMPORTS.require('webos'),
 	palmbus = IMPORTS.require('palmbus'),
-	sys = IMPORTS.require('sys');
+	//sys seems no longer used and therefore we don't require it anymore. sys.debug should be replaced by console.error as per API in 4.x/6.x
+	//sys = IMPORTS.require('sys');
 webos.include("test/loadall.js");
 
 
@@ -64,13 +65,13 @@ AccountsTests.prototype.lunaSend = function (service, method, params, caller) {
 	var future = new Future();
 	future.now(function () {
 		var cmd = "luna-send -n 1 " + (caller ? "-a " + caller : "") + " " + service + "/" + method + " '" + json + "'";
-		// sys.debug("SENT CMD: " + cmd);
+		// console.error("SENT CMD: " + cmd);
 		exec(cmd, function (error, stdout, stderr) {
 			if (error) {
 				future.exception = error;
 			} else {
-				// sys.debug("STDOUT for " + method + ": " + stdout);
-				// sys.debug("STDERR for " + method + ": " + stderr);
+				// console.error("STDOUT for " + method + ": " + stdout);
+				// console.error("STDERR for " + method + ": " + stderr);
 				var output = JSON.parse(stdout);
 				if (output.exception) {
 					future.exception = output;
