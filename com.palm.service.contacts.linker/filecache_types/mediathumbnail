@@ -1,0 +1,5 @@
+{
+	"typeName": "mediathumbnail",
+	"loWatermark": 102400,
+	"hiWatermark": 5242880
+}
