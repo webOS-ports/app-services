@@ -71,8 +71,11 @@ CreateLocalAccountAssistant.prototype.createLocalAccount =  function (username) 
 
 //Creation flag is used to create a default palmprofile account if firstuse is skipped
 CreateLocalAccountAssistant.prototype.createAccountCreatedFlag =  function () {
-		var node_fs = require('fs');
-        var accountCreationFlagPath = "/var/luna/preferences/first-use-profile-created";
-        //Touches the file
-        node_fs.openSync(accountCreationFlagPath, "w");
+    var node_fs = require('fs');
+    var accountCreationFlagPath = "/var/luna/preferences/first-use-profile-created";
+    //Touches the file
+    var flagFd = node_fs.openSync(accountCreationFlagPath, "w");
+    if(flagFd) {
+        node_fs.closeSync(flagFd);
+    }
 };
