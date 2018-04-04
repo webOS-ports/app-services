@@ -21,6 +21,7 @@
 
 #include "commands/ImapSessionCommand.h"
 #include "db/MojDbClient.h"
+#include "db/MojDbQuery.h"
 
 /**
  * Command that searches for local emails with the autoDownload flag set

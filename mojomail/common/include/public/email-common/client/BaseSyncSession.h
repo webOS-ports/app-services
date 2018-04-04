@@ -24,6 +24,7 @@
 #include "activity/Activity.h"
 #include "activity/ActivitySet.h"
 #include "db/MojDbClient.h"
+#include "db/MojDbQuery.h"
 #include <vector>
 #include <set>
 #include <map>

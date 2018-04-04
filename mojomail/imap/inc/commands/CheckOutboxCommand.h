@@ -21,6 +21,7 @@
 
 #include "commands/ImapClientCommand.h"
 #include "db/MojDbClient.h"
+#include "db/MojDbQuery.h"
 #include "activity/Activity.h"
 #include "client/SyncParams.h"
 

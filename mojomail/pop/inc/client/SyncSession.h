@@ -23,6 +23,7 @@
 #include "activity/ActivityBuilderFactory.h"
 #include "client/BaseSyncSession.h"
 #include "data/EmailAccount.h"
+#include "db/MojDbQuery.h"
 #include "PopClient.h"
 #include <vector>
 

@@ -21,6 +21,7 @@
 #include "data/SmtpAccountAdapter.h"
 #include "data/MojoDatabase.h"
 #include "db/MojDbQuery.h"
+#include "db/MojDbDefs.h"
 #include "data/EmailSchema.h"
 #include "data/DatabaseAdapter.h"
 #include "data/SyncStateAdapter.h"
@@ -176,7 +177,7 @@ void MojoDatabase::UpdateAccountErrorStatus(Signal::SlotRef slot, const MojObjec
 	err = props.put("smtpConfig", smtpConfig);
 	ErrorToException(err);
 
-	err = m_dbClient.merge(slot, query, props, MojDb::FlagMerge);
+	err = m_dbClient.merge(slot, query, props, MojDbFlagMerge);
 	ErrorToException(err);
 }
 

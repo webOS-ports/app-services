@@ -22,6 +22,7 @@
 
 #include "client/BaseSyncSession.h"
 #include "client/SyncParams.h"
+#include "db/MojDbQuery.h"
 
 class ImapClient;
 class ScheduleRetryCommand;

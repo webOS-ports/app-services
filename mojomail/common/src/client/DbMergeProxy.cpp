@@ -17,6 +17,7 @@
 // LICENSE@@@
 
 #include "client/DbMergeProxy.h"
+#include "db/MojDbDefs.h"
 #include "util/LogUtils.h"
 #include "CommonPrivate.h"
 
@@ -87,7 +88,7 @@ MojErr DbMergeRequest::handleResponse(MojObject& response, MojErr err)
 class DbMergeArrayRequest : public DbMergeRequest
 {
 public:
-	DbMergeArrayRequest(DbMergeProxy& dbClient, MojDbClient::Signal::SlotRef slot, const MojObject* begin, const MojObject* end, MojUInt32 flags = MojDb::FlagNone)
+	DbMergeArrayRequest(DbMergeProxy& dbClient, MojDbClient::Signal::SlotRef slot, const MojObject* begin, const MojObject* end, MojUInt32 flags = MojDbFlagNone)
 	: DbMergeRequest(dbClient, slot, flags)
 	{
 		MojErr err = m_array.append(begin, end);
@@ -107,7 +108,7 @@ protected:
 class DbMergePropsRequest : public DbMergeRequest
 {
 public:
-	DbMergePropsRequest(DbMergeProxy& dbClient, MojDbClient::Signal::SlotRef slot, const MojDbQuery& query, const MojObject& props, MojUInt32 flags = MojDb::FlagNone)
+	DbMergePropsRequest(DbMergeProxy& dbClient, MojDbClient::Signal::SlotRef slot, const MojDbQuery& query, const MojObject& props, MojUInt32 flags = MojDbFlagNone)
 	: DbMergeRequest(dbClient, slot, flags),
 	  m_query(query),
 	  m_props(props)

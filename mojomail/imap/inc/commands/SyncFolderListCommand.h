@@ -21,6 +21,7 @@
 
 #include "commands/ImapSessionCommand.h"
 #include "db/MojDbClient.h"
+#include "db/MojDbQuery.h"
 #include "ImapCoreDefs.h"
 #include "sync/FolderListDiff.h"
 #include <boost/regex.hpp>

@@ -23,6 +23,7 @@
 #include "commands/PopSessionPowerCommand.h"
 #include "core/MojObject.h"
 #include "db/MojDbClient.h"
+#include "db/MojDbQuery.h"
 
 class AutoDownloadCommand : public PopSessionPowerCommand
 {

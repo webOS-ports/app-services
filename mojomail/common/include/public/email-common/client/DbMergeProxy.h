@@ -20,6 +20,7 @@
 #define DBMERGEPROXY_H_
 
 #include "db/MojDbServiceClient.h"
+#include "db/MojDbDefs.h"
 
 /* This class is a hack to work around DFISH-7445. It can be used in place of a normal
  * MojDbServiceClient but retries any merge requests that return MojErrDbInconsistentIndex.
@@ -30,14 +31,14 @@ public:
 	DbMergeProxy(MojService* service, const MojChar* serviceName = MojDbServiceDefs::ServiceName);
 
 	virtual MojErr merge(Signal::SlotRef handler, const MojObject* begin,
-						 const MojObject* end, MojUInt32 flags = MojDb::FlagNone);
+						 const MojObject* end, MojUInt32 flags = MojDbFlagNone);
 	virtual MojErr merge(Signal::SlotRef handler, const MojDbQuery& query,
-						 const MojObject& props, MojUInt32 flags = MojDb::FlagNone);
+						 const MojObject& props, MojUInt32 flags = MojDbFlagNone);
 
 	MojErr realMerge(Signal::SlotRef handler, const MojObject* begin,
-						 const MojObject* end, MojUInt32 flags = MojDb::FlagNone);
+						 const MojObject* end, MojUInt32 flags = MojDbFlagNone);
 	MojErr realMerge(Signal::SlotRef handler, const MojDbQuery& query,
-						 const MojObject& props, MojUInt32 flags = MojDb::FlagNone);
+						 const MojObject& props, MojUInt32 flags = MojDbFlagNone);
 };
 
 #endif /* DBMERGEPROXY_H_ */

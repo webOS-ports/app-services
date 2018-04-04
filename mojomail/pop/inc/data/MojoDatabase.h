@@ -21,6 +21,7 @@
 
 #include "data/DatabaseInterface.h"
 #include "db/MojDbClient.h"
+#include "db/MojDbQuery.h"
 
 class MojoDatabase : public DatabaseInterface
 {

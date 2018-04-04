@@ -23,6 +23,7 @@
 #include "data/PopFolderAdapter.h"
 #include "data/EmailSchema.h"
 #include "db/MojDbQuery.h"
+#include "db/MojDbDefs.h"
 #include "PopClient.h"
 #include "data/DatabaseAdapter.h"
 
@@ -570,7 +571,7 @@ void MojoDatabase::UpdateItemRevisions(Signal::SlotRef slot, const MojObject::Ob
 
 void MojoDatabase::DeleteItems (Signal::SlotRef slot, const MojObject::ObjectVec& array)
 {
-	MojErr err = m_dbClient.del(slot, array.begin(), array.end(), MojDb::FlagPurge);
+	MojErr err = m_dbClient.del(slot, array.begin(), array.end(), MojDbFlagPurge);
 	ErrorToException(err);
 }
 
@@ -583,6 +584,6 @@ void MojoDatabase::DeleteItems (Signal::SlotRef slot, const std::string kind, co
 	err = q.where(idField.c_str(), MojDbQuery::OpEq, id);
 	ErrorToException(err);
 
-	err = m_dbClient.del(slot, q, MojDb::FlagPurge);
+	err = m_dbClient.del(slot, q, MojDbFlagPurge);
 	ErrorToException(err);
 }

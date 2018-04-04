@@ -23,6 +23,7 @@
 #include "core/MojObject.h"
 #include "data/DatabaseInterface.h"
 #include "data/UidCache.h"
+#include "db/MojDbQuery.h"
 
 class TrimFolderEmailsCommand : public PopSessionCommand
 {

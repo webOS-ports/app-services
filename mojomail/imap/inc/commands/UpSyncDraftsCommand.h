@@ -21,6 +21,7 @@
 
 #include "commands/ImapSyncSessionCommand.h"
 #include "db/MojDbClient.h"
+#include "db/MojDbQuery.h"
 #include "ImapCoreDefs.h"
 #include <boost/shared_ptr.hpp>
 #include <vector>

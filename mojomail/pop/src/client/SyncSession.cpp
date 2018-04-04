@@ -21,6 +21,7 @@
 #include "PopErrors.h"
 #include "data/DatabaseAdapter.h"
 #include "data/SyncStateAdapter.h"
+#include "db/MojDbQuery.h"
 
 const int SyncSession::GET_CHANGES_BATCH_SIZE = 50;
 

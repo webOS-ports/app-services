@@ -22,6 +22,7 @@
 #include "SmtpCommand.h"
 #include "SmtpClient.h"
 #include "db/MojDbClient.h"
+#include "db/MojDbQuery.h"
 #include "activity/Activity.h"
 #include "activity/NetworkStatus.h"
 #include <boost/regex.hpp>

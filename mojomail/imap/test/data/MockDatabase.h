@@ -22,6 +22,7 @@
 #include "data/DatabaseInterface.h"
 #include "exceptions/MailException.h"
 #include "db/MojDbClient.h"
+#include "db/MojDbQuery.h"
 #include <utility>
 
 class ImapAccount;

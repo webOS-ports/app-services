@@ -19,6 +19,7 @@
 #include "data/MojoDatabase.h"
 #include "ImapCoreDefs.h"
 #include "db/MojDbQuery.h"
+#include "db/MojDbDefs.h"
 #include "data/EmailAccountAdapter.h"
 #include "data/EmailSchema.h"
 #include "data/Folder.h"
@@ -90,7 +91,7 @@ void MojoDatabase::DeleteIds(Signal::SlotRef slot, const MojObject::ObjectVec& i
 
 void MojoDatabase::PurgeIds(Signal::SlotRef slot, const MojObject::ObjectVec& ids)
 {
-	MojErr err = m_dbClient.del(slot, ids.begin(), ids.end(), MojDb::FlagPurge);
+	MojErr err = m_dbClient.del(slot, ids.begin(), ids.end(), MojDbFlagPurge);
 	ErrorToException(err);
 }
 
@@ -106,7 +107,7 @@ void MojoDatabase::DeleteFolderEmails(Signal::SlotRef slot, const MojObject& fol
 	ErrorToException(err);
 
 	// Delete and purge all emails in this folder
-	err = m_dbClient.del(slot, query, MojDb::FlagPurge);
+	err = m_dbClient.del(slot, query, MojDbFlagPurge);
 	ErrorToException(err);
 }
 

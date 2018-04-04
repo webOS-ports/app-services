@@ -22,6 +22,7 @@
 #include "activity/Activity.h"
 #include "commands/PopClientCommand.h"
 #include "db/MojDbClient.h"
+#include "db/MojDbQuery.h"
 
 class MoveEmailsCommand : public PopClientCommand
 {

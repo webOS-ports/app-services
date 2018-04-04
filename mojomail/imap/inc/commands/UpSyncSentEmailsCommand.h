@@ -21,7 +21,7 @@
 
 #include "commands/ImapSyncSessionCommand.h"
 #include "commands/AppendCommand.h"
-
+#include "db/MojDbQuery.h"
 
 class StoreResponseParser;
 

@@ -27,6 +27,7 @@
 #include "data/UidCache.h"
 #include "data/UidMap.h"
 #include "db/MojDbClient.h"
+#include "db/MojDbQuery.h"
 
 class UidMap;
 class SyncEmailsCommand;

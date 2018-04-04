@@ -20,6 +20,7 @@
 #define MOJODATABASE_H_
 
 #include "data/DatabaseInterface.h"
+#include "db/MojDbQuery.h"
 
 class MojoDatabase : public DatabaseInterface
 {

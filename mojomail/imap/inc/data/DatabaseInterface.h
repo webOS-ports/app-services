@@ -20,6 +20,7 @@
 #define DATABASEINTERFACE_H_
 
 #include "db/MojDbClient.h"
+#include "db/MojDbQuery.h"
 #include "data/ImapAccountAdapter.h"
 #include "ImapCoreDefs.h"
 
