@@ -1,0 +1,6 @@
+{
+	"com.palm.service.contacts.linker": [ 
+		"public",
+		"private"
+	]
+}

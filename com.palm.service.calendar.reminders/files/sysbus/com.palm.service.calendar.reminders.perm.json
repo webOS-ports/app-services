@@ -1,0 +1,6 @@
+{
+	"com.palm.service.calendar.reminders": [ 
+		"public",
+		"private"
+	]
+}

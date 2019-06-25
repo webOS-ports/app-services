@@ -1,1 +1,10 @@
-{"role": {"allowedNames": ["com.palm.service.contacts"], "type": "regular", "exeName": "js"}, "permissions": [{"inbound": ["*"], "outbound": ["*"], "service": "com.palm.service.contacts"}]}
+{
+	"allowedNames": ["com.palm.service.contacts"],
+	"type": "regular",
+	"exeName": "js",
+	"permissions": [{
+		"service": "com.palm.service.contacts",
+		"inbound": ["*"],
+		"outbound": ["*"]
+	}]
+}

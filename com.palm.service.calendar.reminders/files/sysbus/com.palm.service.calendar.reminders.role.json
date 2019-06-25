@@ -1,1 +1,10 @@
-{"role": {"allowedNames": ["com.palm.service.calendar.reminders"], "type": "regular", "exeName": "js"}, "permissions": [{"inbound": ["*"], "outbound": ["*"], "service": "com.palm.service.calendar.reminders"}]}
+{
+	"allowedNames": ["com.palm.service.calendar.reminders"],
+	"type": "regular",
+	"exeName": "js",
+	"permissions": [{
+		"service": "com.palm.service.calendar.reminders",
+		"inbound": ["*"],
+		"outbound": ["*"]
+	}]
+}
