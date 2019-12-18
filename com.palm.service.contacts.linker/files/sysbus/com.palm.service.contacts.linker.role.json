@@ -1,7 +1,7 @@
 {
+	"appId": "com.palm.service.contacts.linker",
 	"allowedNames": ["com.palm.service.contacts.linker"],
 	"type": "regular",
-	"exeName": "js",
 	"permissions": [{
 		"service": "com.palm.service.contacts.linker",
 		"inbound": ["*"],
