@@ -1,5 +1,5 @@
 {
-	"public": [
+	"applications.internal": [
 		"com.palm.service.contacts.linker/manualLink",
 		"com.palm.service.contacts.linker/manualUnlink",
 		"com.palm.service.contacts.linker/setupWatch",
@@ -14,7 +14,7 @@
 		"com.palm.service.contacts.linker/resetCLBDB",
 		"com.palm.service.contacts.linker/deleteOrphanedPerson"
 	],
-	"private": [
+	"services": [
 		"com.palm.service.contacts.linker/manualLink",
 		"com.palm.service.contacts.linker/manualUnlink",
 		"com.palm.service.contacts.linker/setupWatch",

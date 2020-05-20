@@ -1,6 +1,14 @@
 {
 	"com.palm.service.calendar.reminders": [ 
-		"public",
-		"private"
+		"applications",
+		"applications.internal",
+		"activities",
+		"activities.manage",
+		"database",
+		"database.internal",
+		"filecache",
+		"services",
+		"settings",
+		"system"
 	]
 }

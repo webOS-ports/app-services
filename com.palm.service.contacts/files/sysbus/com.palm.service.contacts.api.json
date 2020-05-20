@@ -1,5 +1,5 @@
 {
-	"public": [
+	"applications.internal": [
 		"com.palm.service.contacts/preBackup",
 		"com.palm.service.contacts/countVCardContacts",
 		"com.palm.service.contacts/readVCard",
@@ -17,7 +17,7 @@
 		"com.palm.service.contacts/refetchPhoto",
 		"com.palm.service.contacts/updatePersonLocaleAll"
 	],
-	"private": [
+	"services": [
 		"com.palm.service.contacts/preBackup",
 		"com.palm.service.contacts/countVCardContacts",
 		"com.palm.service.contacts/readVCard",
