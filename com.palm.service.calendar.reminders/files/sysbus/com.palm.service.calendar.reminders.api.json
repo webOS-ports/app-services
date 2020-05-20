@@ -1,5 +1,5 @@
 {
-	"public": [
+	"services": [
 		"com.palm.service.calendar.reminders/onInit",
 		"com.palm.service.calendar.reminders/onWake",
 		"com.palm.service.calendar.reminders/onDBChanged",
@@ -7,7 +7,7 @@
 		"com.palm.service.calendar.reminders/onDismiss",
 		"com.palm.service.calendar.reminders/onAutoClose"
 	],
-	"private": [
+	"applications.internal": [
 		"com.palm.service.calendar.reminders/onInit",
 		"com.palm.service.calendar.reminders/onWake",
 		"com.palm.service.calendar.reminders/onDBChanged",
