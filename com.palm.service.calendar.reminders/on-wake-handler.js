@@ -183,7 +183,7 @@ WakeCommandAssistant.prototype.launchApp = function(future){
 			}
 		};
 		//Don't really care about the result of this future.
-		var tempFuture = PalmCall.call("palm://com.palm.applicationManager", "open", appLaunchParams);
+		var tempFuture = PalmCall.call("luna://com.webos.service.applicationManager", "launch", appLaunchParams);
 	}
 	future.result = {returnValue: true};
 
