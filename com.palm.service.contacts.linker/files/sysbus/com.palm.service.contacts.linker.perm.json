@@ -1,14 +1,7 @@
 {
 	"com.palm.service.contacts.linker": [ 
-		"applications",
-		"applications.internal",
-		"activities",
-		"activities.manage",
-		"database",
-		"database.internal",
-		"filecache",
-		"services",
-		"settings",
-		"system"
+		"activity.operation",
+		"database.operation",
+		"filecache.operation"
 	]
 }
