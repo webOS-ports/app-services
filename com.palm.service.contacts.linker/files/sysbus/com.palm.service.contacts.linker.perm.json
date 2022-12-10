@@ -2,6 +2,7 @@
 	"com.palm.service.contacts.linker": [ 
 		"activity.operation",
 		"database.operation",
-		"filecache.operation"
+		"filecache.operation",
+		"systemsettings.query"
 	]
 }
