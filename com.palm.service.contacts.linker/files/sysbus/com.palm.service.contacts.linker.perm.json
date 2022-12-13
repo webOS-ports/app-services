@@ -3,6 +3,7 @@
 		"activity.operation",
 		"database.operation",
 		"filecache.operation",
-		"systemsettings.query"
+		"systemsettings.query",
+		"time.query"
 	]
 }
