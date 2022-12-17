@@ -2,6 +2,7 @@
 	"com.palm.service.calendar.reminders": [ 
 		"activity.operation",
 		"activity.query",
+		"calendarremindersservice.operation",
 		"database.operation",
 		"filecache.operation"
 	]
