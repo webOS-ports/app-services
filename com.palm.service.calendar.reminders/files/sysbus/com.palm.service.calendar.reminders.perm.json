@@ -1,14 +1,9 @@
 {
 	"com.palm.service.calendar.reminders": [ 
-		"applications",
-		"applications.internal",
-		"activities",
-		"activities.manage",
-		"database",
-		"database.internal",
-		"filecache",
-		"services",
-		"settings",
-		"system"
+		"activity.operation",
+		"activity.query",
+		"calendarremindersservice.operation",
+		"database.operation",
+		"filecache.operation"
 	]
 }

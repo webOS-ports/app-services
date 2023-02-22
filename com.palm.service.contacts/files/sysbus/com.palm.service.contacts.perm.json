@@ -1,14 +1,13 @@
 {
 	"com.palm.service.contacts": [ 
-		"applications",
-		"applications.internal",
-		"activities",
-		"activities.manage",
-		"database",
-		"database.internal",
-		"filecache",
-		"services",
-		"settings",
-		"system"
+		"activity.operation",
+		"activity.query",
+		"contactslinkerservice.operation",
+		"contactsservice.operation",
+		"database.operation",
+		"filecache.operation",
+		"systemsettings.query",
+		"tempdatabase.operation",
+		"time.query"
 	]
 }

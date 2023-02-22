@@ -1,13 +1,5 @@
 {
-	"services": [
-		"com.palm.service.calendar.reminders/onInit",
-		"com.palm.service.calendar.reminders/onWake",
-		"com.palm.service.calendar.reminders/onDBChanged",
-		"com.palm.service.calendar.reminders/onSnooze",
-		"com.palm.service.calendar.reminders/onDismiss",
-		"com.palm.service.calendar.reminders/onAutoClose"
-	],
-	"applications.internal": [
+	"calendarremindersservice.operation": [
 		"com.palm.service.calendar.reminders/onInit",
 		"com.palm.service.calendar.reminders/onWake",
 		"com.palm.service.calendar.reminders/onDBChanged",
