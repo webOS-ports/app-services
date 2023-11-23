@@ -30,7 +30,7 @@ CreateLocalAccountAssistant.prototype.run = function(future) {
 	future.then(this, function() {
 		var results = future.result.results;
 		if(results.length === 0) {
-			this.createLocalAccount("Open webOS");
+			this.createLocalAccount("LuneOS");
 			return {returnValue:true, accountCreated:true};
 		}
 		return {returnValue:true, accountCreated:false};
