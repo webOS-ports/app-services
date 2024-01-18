@@ -1,0 +1,4 @@
+{
+ "allowedNames": ["com.palm.service.contacts.linker"],
+ "contactslinkerservice.operation": ["dev"]
+}
