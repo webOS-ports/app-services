@@ -1542,32 +1542,36 @@ Autolinker.fixupAndSaveMergedPeople = function (newPerson, originalPerson, shoul
 
 Autolinker.doRankingFunctions = function (person, contactToAutoLink) {
 	var future = new Future(),
-		weightedResults = {};
+		weightedResults = {},
+		similarityRankers = [
+			Autolinker.similarName,
+			Autolinker.similarPhoneNumber,
+			Autolinker.similarEmail,
+			Autolinker.similarIM
+		];
 	
+	// OPT(b): run the 4 independent similarity queries CONCURRENTLY so their db8 batch
+	// round-trips overlap (stock ran them strictly sequentially -> 4 serial IPC waits per
+	// contact). Each ranker mutates the shared weightedResults with a distinct, ADDITIVE
+	// similarity type, so the outcome is order-independent (node is single-threaded; the
+	// result callbacks never truly race). CLB manual link/unlink keep override semantics
+	// (MAX/MIN weights) so they stay sequential and AFTER the similarity pass, as in stock.
 	future.now(function () {
-		Console.log("Getting similar names");
-		return Autolinker.similarName(person, contactToAutoLink, weightedResults);
-	});
-	
-	future.then(function () {
-		var result = future.result;
-		
-		Console.log("Getting similar phone numbers");
-		return Autolinker.similarPhoneNumber(person, contactToAutoLink, weightedResults);
-	});
-	
-	future.then(function () {
-		var result = future.result;
-		
-		Console.log("Getting similar emails");
-		return Autolinker.similarEmail(person, contactToAutoLink, weightedResults);
-	});
-	
-	future.then(function () {
-		var result = future.result;
-		
-		Console.log("Getting similar ims");
-		return Autolinker.similarIM(person, contactToAutoLink, weightedResults);
+		Console.log("Getting similar name/phone/email/im (parallel)");
+		// NOTE: mapReduce's data items must NOT be functions -- internally it does
+		// map(data[i]).then(data[i], fn), and Future.then treats a function passed as the
+		// scope as the callback, which would spuriously re-invoke the ranker with the wrong
+		// args. So we pass indices and dispatch through similarityRankers in map().
+		return Foundations.Control.mapReduce({
+			map: function (idx) {
+				return similarityRankers[idx](person, contactToAutoLink, weightedResults);
+			},
+			reduce: function (results) {
+				var f = new Future();
+				f.result = true;
+				return f;
+			}
+		}, [0, 1, 2, 3]);
 	});
 	
 	future.then(function () {
@@ -1857,7 +1861,7 @@ Autolinker.getCurrentWatchRev = function () {
 
 /////////////////////////// Take this out before production //////////////////////////
 
-Autolinker.prototype.setupWatch = function () {
+Autolinker.prototype.suckyHackySetupWatch = function () {
 	var future = new Future();
 	
 	future.now(this, function () {
