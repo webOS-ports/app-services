@@ -93,7 +93,9 @@ function DeleteCommandAssistant() {
 			r = future.result;
 			
 			// Kickoff account deletion in the background (don't wait for a response)
-			PalmCall.call("palm://com.palm.service.accounts/notifyAccountDeleted", "", {"accountId":args.accountId});
+			// keepData: forward the caller's "keep this account's data on device" choice so the capability
+			// onDelete handlers (e.g. imlibpurple) can skip the data purge. Absent/false => wipe (default).
+			PalmCall.call("palm://com.palm.service.accounts/notifyAccountDeleted", "", {"accountId":args.accountId, "keepData":args.keepData});
 
 			console.log("DeleteCommandAssistant: deleted account " + args.accountId);
 			return {};
