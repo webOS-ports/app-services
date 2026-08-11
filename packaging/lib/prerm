@@ -1,0 +1,79 @@
+#!/bin/sh
+# Shared prerm for every app-services package built by this packaging/ tree -- restores the whole
+# directory postinst backed up (as a single tar), or removes it if it never existed on stock.
+# prerm runs BEFORE ipkg deletes this package's own tracked files, so
+# /media/cryptofs/app-services-overwrite/<pkg-name>/dest.txt (part of this package's payload) is still present
+# and readable here.
+set +e
+BAK_ROOT=/media/cryptofs/app-services-backup
+log() { echo "[app-services] $*"; }
+
+mount -o remount,rw /dev/mapper/store-root / 2>/dev/null
+mount -o remount,rw / 2>/dev/null
+
+# See postinst's matching comment: pmPreRemove.script (this file, via make-ipk.sh) is what
+# Preware/WebOS Quick Install actually run, and under their offline-root ipkg invocation, staged
+# content can land at either the direct path or the /media/cryptofs/apps-prefixed one.
+case "$0" in
+  */pmPreRemove.script) PKGID="$(basename "$(dirname "$0")")" ;;
+  *.prerm) PKGID="$(basename "$0" .prerm)" ;;
+  *) PKGID="" ;;
+esac
+
+OV=""
+if [ -n "$PKGID" ]; then
+  for base in /media/cryptofs/app-services-overwrite /media/cryptofs/apps/media/cryptofs/app-services-overwrite; do
+    [ -f "$base/$PKGID/dest.txt" ] && OV="$base/$PKGID" && break
+  done
+fi
+if [ -z "$OV" ]; then
+  for d in /media/cryptofs/app-services-overwrite/*/ /media/cryptofs/apps/media/cryptofs/app-services-overwrite/*/; do
+    [ -f "${d}dest.txt" ] && OV="${d%/}" && break
+  done
+fi
+
+if [ -n "$OV" ]; then
+  DST="$(cat "$OV/dest.txt")"
+  BAK="$BAK_ROOT$(echo "$DST" | tr '/' '_').tar"
+
+  # Carry any live runtime data (see postinst) across the restore/removal too, instead of
+  # reverting it to whatever the stock backup tar happened to hold at first-install time.
+  PRESERVE_TMP=""
+  if [ -s "$OV/preserve.txt" ]; then
+    PRESERVE_TMP="$(mktemp -d)"
+    while IFS= read -r rel; do
+      [ -n "$rel" ] || continue
+      if [ -e "$DST/$rel" ]; then
+        mkdir -p "$PRESERVE_TMP/$(dirname "$rel")"
+        mv "$DST/$rel" "$PRESERVE_TMP/$rel"
+      fi
+    done < "$OV/preserve.txt"
+  fi
+
+  rm -rf "$DST"
+  if [ -f "$BAK" ]; then
+    ( cd "$(dirname "$DST")" && tar xf "$BAK" )
+    rm -f "$BAK"
+    log "restored stock $DST"
+  else
+    log "removed $DST (was never on stock)"
+  fi
+
+  if [ -n "$PRESERVE_TMP" ]; then
+    while IFS= read -r rel; do
+      [ -n "$rel" ] || continue
+      if [ -e "$PRESERVE_TMP/$rel" ]; then
+        mkdir -p "$DST/$(dirname "$rel")"
+        rm -rf "$DST/$rel"
+        mv "$PRESERVE_TMP/$rel" "$DST/$rel"
+      fi
+    done < "$OV/preserve.txt"
+    rm -rf "$PRESERVE_TMP"
+  fi
+fi
+
+luna-send -n 1 luna://com.palm.applicationManager/rescan '{}' >/dev/null 2>&1
+
+# Deliberately NOT remounting root back to read-only here -- same reasoning as postinst.
+log "removal complete."
+exit 0
