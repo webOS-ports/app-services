@@ -791,7 +791,7 @@
 				"default": 0
 			}]
 		}, {
-			"name": "favorite_searchProperty_sortKey",
+			"name": "favorite_searchPropertySvc_sortKey",
 			"props": [{
 				"name": "favorite"
 			}, {
@@ -827,6 +827,9 @@
 					"tokenize": "all"
 				}, {
 					"name": "emails.value",
+					"tokenize": "all"
+				}, {
+					"name": "ims.type",
 					"tokenize": "all"
 				}]
 			}, {
