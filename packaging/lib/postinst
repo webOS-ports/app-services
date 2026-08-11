@@ -1,0 +1,279 @@
+#!/bin/sh
+# Shared postinst for every app-services package built by this packaging/ tree. Each package stages
+# its whole app/framework directory under /media/cryptofs/app-services-overwrite/<pkg-name>/payload/ plus a
+# dest.txt naming the real absolute path it replaces (a single ipk only ever ships ONE such
+# subdirectory -- the per-package name just keeps multiple packages' payloads from colliding on
+# the same tracked filename at the ipkg level). Backs up whatever's currently there (once, as a
+# single tar -- not per-file: these are whole-directory replacements, not surgical patches) so
+# prerm can restore it, then replaces the whole directory with this package's payload.
+set +e
+BAK_ROOT=/media/cryptofs/app-services-backup
+log() { echo "[app-services] $*"; }
+
+mount -o remount,rw /dev/mapper/store-root / 2>/dev/null
+mount -o remount,rw / 2>/dev/null
+
+# Preware/WebOS Quick Install run this as pmPostInstall.script (see make-ipk.sh), NOT as ipkg's
+# own control.tar.gz postinst -- ipkg is invoked as `ipkg -o /media/cryptofs/apps -force-overwrite
+# install <ipk>` (confirmed live via /var/log/messages), and offline-root mode ("-o") explicitly
+# skips running the package's real postinst entirely. Under that same "-o" mode, data.tar.gz's own
+# contents ALSO land under /media/cryptofs/apps (everything ipkg touches is relative to the
+# offline root), so $OV must be searched for at BOTH the direct-install location and the
+# offline-root-prefixed one. A plain `ipkg install` (no -o) only ever populates the first.
+case "$0" in
+  */pmPostInstall.script) PKGID="$(basename "$(dirname "$0")")" ;;
+  *.postinst) PKGID="$(basename "$0" .postinst)" ;;
+  *) PKGID="" ;;
+esac
+
+OV=""
+if [ -n "$PKGID" ]; then
+  for base in /media/cryptofs/app-services-overwrite /media/cryptofs/apps/media/cryptofs/app-services-overwrite; do
+    [ -f "$base/$PKGID/dest.txt" ] && OV="$base/$PKGID" && break
+  done
+fi
+if [ -z "$OV" ]; then
+  for d in /media/cryptofs/app-services-overwrite/*/ /media/cryptofs/apps/media/cryptofs/app-services-overwrite/*/; do
+    [ -f "${d}dest.txt" ] && OV="${d%/}" && break
+  done
+fi
+# WebOSQuickInstall (confirmed live) runs this SAME pmPostInstall.script a second time itself,
+# after the real App-Installer-driven install already ran it once and cleaned up $OV -- a second
+# run legitimately finds nothing staged, which used to be a hard error here ("no dest.txt found").
+# That's not a real failure, just harmless redundancy: LASTDEST (written on success below, and
+# NEVER cleaned up like $OV is) records where we last installed this exact PKGID. If it says we
+# already installed successfully and that destination still exists, this is a no-op, not an error.
+LASTDEST="/media/cryptofs/app-services-overwrite/.last-installed/$PKGID.dest.txt"
+if [ -z "$OV" ]; then
+  if [ -n "$PKGID" ] && [ -f "$LASTDEST" ] && [ -d "$(cat "$LASTDEST")" ]; then
+    log "nothing newly staged for $PKGID -- already installed at $(cat "$LASTDEST"), treating as a no-op"
+    exit 0
+  fi
+  echo "!! no app-services-overwrite/*/dest.txt found (checked direct + offline-root paths), nothing to install" >&2
+  exit 1
+fi
+
+DST="$(cat "$OV/dest.txt")"
+BAK="$BAK_ROOT$(echo "$DST" | tr '/' '_').tar"
+
+mkdir -p "$BAK_ROOT"
+if [ -d "$DST" ] && [ ! -f "$BAK" ]; then
+  ( cd "$(dirname "$DST")" && tar cf "$BAK" "$(basename "$DST")" ) \
+    && log "backed up stock $DST -> $BAK"
+fi
+
+# Some services (e.g. contacts.linker's filecache_types/{contactphoto,contactvcard} contact-photo
+# cache) keep LIVE RUNTIME DATA inside the same directory as their code. preserve.txt (written by
+# stage_whole) lists those subpaths -- move them out of the way before the wholesale rm -rf/replace
+# below, then back in afterward, instead of destroying them.
+PRESERVE_TMP=""
+if [ -s "$OV/preserve.txt" ]; then
+  PRESERVE_TMP="$(mktemp -d)"
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    if [ -e "$DST/$rel" ]; then
+      mkdir -p "$PRESERVE_TMP/$(dirname "$rel")"
+      mv "$DST/$rel" "$PRESERVE_TMP/$rel"
+    fi
+  done < "$OV/preserve.txt"
+fi
+
+rm -rf "$DST"
+mkdir -p "$DST"
+tar -C "$DST" --no-same-owner -xzf "$OV/payload.tar.gz"
+TAR_STATUS=$?
+
+# This whole script runs under `set +e` (a failed step shouldn't abort a postinst mid-way through
+# other packages' installs), which means a corrupted/truncated payload.tar.gz (confirmed live
+# elsewhere in this project family: a bad transfer left a package silently "installed" into an
+# EMPTY directory - ipkg and this script both reported success) would otherwise go completely
+# unnoticed. Explicitly check both tar's own exit status AND that extraction actually produced
+# something (a truncated-but-still-gzip-valid archive can exit 0 with partial content) - roll back
+# to the pre-install backup if we have one, so a bad transfer leaves the previous working install
+# in place instead of a broken empty directory, and fail loudly either way instead of silently
+# recording success. PRESERVE_TMP's content isn't restored here on failure - $BAK already holds a
+# full snapshot of $DST (preserved data included) from just before this install started.
+if [ "$TAR_STATUS" -ne 0 ] || [ -z "$(ls -A "$DST" 2>/dev/null)" ]; then
+  echo "!! extraction of $OV/payload.tar.gz into $DST failed (tar exit $TAR_STATUS, $([ -z "$(ls -A "$DST" 2>/dev/null)" ] && echo empty || echo non-empty) result) - likely a corrupted/truncated transfer" >&2
+  [ -n "$PRESERVE_TMP" ] && rm -rf "$PRESERVE_TMP"
+  if [ -f "$BAK" ]; then
+    rm -rf "$DST"
+    ( cd "$(dirname "$DST")" && tar xf "$BAK" ) && log "rolled back to pre-install backup at $DST"
+  fi
+  exit 1
+fi
+
+if [ -n "$PRESERVE_TMP" ]; then
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    if [ -e "$PRESERVE_TMP/$rel" ]; then
+      mkdir -p "$DST/$(dirname "$rel")"
+      rm -rf "$DST/$rel"
+      mv "$PRESERVE_TMP/$rel" "$DST/$rel"
+    fi
+  done < "$OV/preserve.txt"
+  rm -rf "$PRESERVE_TMP"
+fi
+
+# Recreate any symlinks stage_whole had to leave out of the payload (cryptofs, where the payload
+# was staged, rejects symlink() outright) -- $DST is on root fs, which supports them fine.
+if [ -s "$OV/symlinks.txt" ]; then
+  while IFS="$(printf '\t')" read -r relpath target; do
+    [ -n "$relpath" ] || continue
+    mkdir -p "$DST/$(dirname "$relpath")"
+    ln -sf "$target" "$DST/$relpath"
+  done < "$OV/symlinks.txt"
+fi
+log "installed $DST"
+
+# Provision any db8 kind/permission schema files (stage_db8_schema) to their real, system-wide
+# location -- NOT part of the whole-directory $DST replace above, since db8 only ever reads
+# kinds/permissions from /etc/palm/db/{kinds,permissions}, regardless of where the owning
+# service's own code lives (confirmed live: a copy sitting under $DST/db/ is completely inert).
+# Dropping the files there isn't enough for an already-booted device to pick them up either -
+# putKind/putPermissions must be called explicitly, as the kind's own declared owner (db8 returns
+# -3963 permission denied otherwise) - same proven mechanism as webos-synergy-revival/carddav's
+# provision-cdav-db.sh. Idempotent, safe to re-run on every install/upgrade.
+if [ -d "$OV/db8-kinds" ] || [ -d "$OV/db8-permissions" ]; then
+  mkdir -p /etc/palm/db/kinds /etc/palm/db/permissions
+  for f in "$OV/db8-kinds"/*; do
+    [ -f "$f" ] || continue
+    name="$(basename "$f")"
+    cp "$f" "/etc/palm/db/kinds/$name"
+    owner="$(grep '"owner"' "$f" | head -1 | sed 's/.*: *"//; s/".*//')"
+    [ -n "$owner" ] || owner="$PKGID"
+    content="$(cat "$f")"
+    # putKind requires "owner" IN THE PAYLOAD ITSELF (error 22 "required property not found -
+    # 'owner'" otherwise) - the -a flag only controls which caller identity ACL-gates the call,
+    # it does NOT get injected into the stored kind document. Confirmed live: com.palm.account and
+    # com.palm.firstlaunch's kind files here never declared "owner" inline (unlike
+    # com.palm.account.credentials, which does) and both failed with this exact error while this
+    # script's own success check (luna-send's process exit code, not the LS2 reply content) never
+    # noticed - falsely logged "provisioned" for both. Inject it when missing.
+    if [ -z "$(grep '"owner"' "$f")" ]; then
+      # Inject after the FIRST '{' wherever it is -- NOT a line-1-anchored sed (confirmed live,
+      # core-apps com.palm.app.phone: com.palm.phonecall/com.palm.phonecallgroup both open with a
+      # /* ... */ comment before their '{', so a line-1 anchor silently no-ops and "owner" never
+      # gets injected). Not GNU sed's 0,/{/{s///} range either - BusyBox sed on-device doesn't
+      # support that syntax and silently no-ops on it too.
+      content="$(printf '%s' "$content" | awk -v owner="$owner" '!done && /\{/{sub(/\{/, "{\"owner\":\"" owner "\",");done=1} {print}')"
+    fi
+    reply="$(luna-send -i -n 1 -a "$owner" -f palm://com.palm.db/putKind "$content" 2>&1 </dev/null)"
+    if echo "$reply" | grep -q '"returnValue"[[:space:]]*:[[:space:]]*true'; then
+      log "  provisioned db8 kind $name (owner $owner)"
+    else
+      log "  !! putKind failed for $name (owner $owner): $reply"
+    fi
+  done
+  for f in "$OV/db8-permissions"/*; do
+    [ -f "$f" ] || continue
+    name="$(basename "$f")"
+    cp "$f" "/etc/palm/db/permissions/$name"
+    owner="$(grep '"owner"' "/etc/palm/db/kinds/$name" 2>/dev/null | head -1 | sed 's/.*: *"//; s/".*//')"
+    [ -n "$owner" ] || owner="$PKGID"
+    reply="$(luna-send -i -n 1 -a "$owner" -f palm://com.palm.db/putPermissions "{\"permissions\":$(cat "$f")}" 2>&1 </dev/null)"
+    if echo "$reply" | grep -q '"returnValue"[[:space:]]*:[[:space:]]*true'; then
+      log "  provisioned db8 permissions $name (owner $owner)"
+    else
+      log "  !! putPermissions failed for $name (owner $owner): $reply"
+    fi
+  done
+fi
+
+# Same as the db8-kinds/db8-permissions block above, but for the SEPARATE tempdb mojodb instance
+# (/etc/palm/tempdb/{kinds,permissions}, luna service com.palm.tempdb -- confirmed live a different
+# bus name from com.palm.db, "kind not registered" (-3970) otherwise even though the file sits right
+# there in /etc/palm/tempdb/kinds). Confirmed live (2026-08-04): these files were tracked in-repo,
+# byte-identical to stock, but this packaging tree never shipped or provisioned them at all -- not a
+# regression from an upgrade like the LS2 activation files, just a gap that was always there,
+# producing a permanent kind-not-registered log-spam loop from every watcher (com.palm.app.accounts,
+# com.palm.systemui) regardless of how many times com.palm.service.accounts itself was reinstalled.
+if [ -d "$OV/tempdb-kinds" ] || [ -d "$OV/tempdb-permissions" ]; then
+  mkdir -p /etc/palm/tempdb/kinds /etc/palm/tempdb/permissions
+  for f in "$OV/tempdb-kinds"/*; do
+    [ -f "$f" ] || continue
+    name="$(basename "$f")"
+    cp "$f" "/etc/palm/tempdb/kinds/$name"
+    owner="$(grep '"owner"' "$f" | head -1 | sed 's/.*: *"//; s/".*//')"
+    [ -n "$owner" ] || owner="$PKGID"
+    content="$(cat "$f")"
+    if [ -z "$(grep '"owner"' "$f")" ]; then
+      content="$(printf '%s' "$content" | awk -v owner="$owner" '!done && /\{/{sub(/\{/, "{\"owner\":\"" owner "\",");done=1} {print}')"
+    fi
+    reply="$(luna-send -i -n 1 -a "$owner" -f palm://com.palm.tempdb/putKind "$content" 2>&1 </dev/null)"
+    if echo "$reply" | grep -q '"returnValue"[[:space:]]*:[[:space:]]*true'; then
+      log "  provisioned tempdb kind $name (owner $owner)"
+    else
+      log "  !! tempdb putKind failed for $name (owner $owner): $reply"
+    fi
+  done
+  for f in "$OV/tempdb-permissions"/*; do
+    [ -f "$f" ] || continue
+    name="$(basename "$f")"
+    cp "$f" "/etc/palm/tempdb/permissions/$name"
+    owner="$(grep '"owner"' "/etc/palm/tempdb/kinds/$name" 2>/dev/null | head -1 | sed 's/.*: *"//; s/".*//')"
+    [ -n "$owner" ] || owner="$PKGID"
+    reply="$(luna-send -i -n 1 -a "$owner" -f palm://com.palm.tempdb/putPermissions "{\"permissions\":$(cat "$f")}" 2>&1 </dev/null)"
+    if echo "$reply" | grep -q '"returnValue"[[:space:]]*:[[:space:]]*true'; then
+      log "  provisioned tempdb permissions $name (owner $owner)"
+    else
+      log "  !! tempdb putPermissions failed for $name (owner $owner): $reply"
+    fi
+  done
+fi
+
+# Place any extra files staged via stage_extra_file at their real absolute destination -- these are
+# files a REAL webOS ipk fans out beyond the one directory stage_whole replaces (LS2 hub role/
+# activation files, Activity Manager watches, filecache_types config, etc; see common.sh's comment
+# on stage_extra_file for the confirmed-live incident this closes). Only bounce ls-hubd if something
+# under ls2/ or dbus-1/ actually changed -- a routine reinstall with identical content shouldn't
+# momentarily drop every other service's LS2 connections.
+LS2_CHANGED=0
+if [ -d "$OV/extra-files" ]; then
+  for destfile in "$OV/extra-files"/*.dest; do
+    [ -f "$destfile" ] || continue
+    idx="$(basename "$destfile" .dest)"
+    content="$OV/extra-files/$idx.content"
+    [ -f "$content" ] || continue
+    dest="$(cat "$destfile")"
+    mkdir -p "$(dirname "$dest")"
+    if ! cmp -s "$content" "$dest" 2>/dev/null; then
+      cp "$content" "$dest"
+      log "  placed extra file $dest"
+      case "$dest" in
+        /usr/share/ls2/*|/usr/share/dbus-1/*|/var/palm/ls2/*) LS2_CHANGED=1 ;;
+      esac
+    fi
+  done
+fi
+if [ "$LS2_CHANGED" = "1" ]; then
+  log "  LS2 role/activation files changed -- bouncing ls-hubd to pick them up"
+  stop ls-hubd_public >/dev/null 2>&1
+  stop ls-hubd_private >/dev/null 2>&1
+  start ls-hubd_private >/dev/null 2>&1
+  start ls-hubd_public >/dev/null 2>&1
+fi
+
+# Record where we just installed, OUTSIDE $OV (which is about to be wiped below) -- this is what
+# lets a redundant second invocation (see WebOSQuickInstall comment above) recognize "already done"
+# instead of misreporting a real failure.
+if [ -n "$PKGID" ]; then
+  mkdir -p "$(dirname "$LASTDEST")"
+  echo "$DST" > "$LASTDEST"
+fi
+
+# Clean up our own staged copy now that it's been applied -- if left in place, a LATER package's
+# postinst glob (/media/cryptofs/app-services-overwrite/*/dest.txt) would find this STALE subdirectory before
+# its own freshly-extracted one and silently reinstall the WRONG payload (see core-apps packaging/
+# for the confirmed-live failure mode this guards against).
+rm -rf "$OV"
+
+# Nudge anything that might have this cached to reload.
+luna-send -n 1 luna://com.palm.applicationManager/rescan '{}' >/dev/null 2>&1
+for p in $(ps 2>/dev/null | grep 'com.palm.service.accounts.js' | grep -v grep | awk '{print $1}'); do kill "$p" 2>/dev/null; done
+for p in /proc/[0-9]*; do grep -qa "contacts.linker" "$p/cmdline" 2>/dev/null && kill "${p##*/}" 2>/dev/null; done
+
+# Deliberately NOT remounting root back to read-only here -- ipkg writes its own bookkeeping after
+# postinst returns, and that needs root writable too.
+log "install complete. Restart the UI to pick up patched app/framework JS: stop LunaSysMgr; start LunaSysMgr"
+exit 0

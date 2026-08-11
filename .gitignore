@@ -27,3 +27,4 @@ release-*/
 debug-*/
 patches/
 
+packaging/out/
