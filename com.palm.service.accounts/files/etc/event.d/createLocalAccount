@@ -3,7 +3,7 @@ start on started LunaSysMgr
 console output
 
 script
-if [ -e /var/luna/preferences/ran-first-use ]; then
+if [ -e /var/luna/preferences/ran-firstuse ]; then
 
    if [ ! -f /var/luna/preferences/first-use-profile-created ]
    then
