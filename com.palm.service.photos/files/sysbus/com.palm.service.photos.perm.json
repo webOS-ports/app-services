@@ -1,0 +1,12 @@
+{
+	"com.palm.service.photos": [
+		"accountsservice.operation",
+		"activity.operation",
+		"database.operation",
+		"tempdatabase.operation"
+	],
+	"com.palm.app.photos": ["photosservice.operation"],
+	"com.palm.app.photos-*": ["photosservice.operation"],
+	"org.webosports.app.photos": ["photosservice.operation"],
+	"org.webosports.app.photos-*": ["photosservice.operation"]
+}

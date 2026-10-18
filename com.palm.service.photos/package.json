@@ -1,0 +1,14 @@
+{
+	"name": "com.palm.service.photos",
+	"version": "4.0.0",
+	"description": "Photos service: cloud photo sync, thumbnails, and album and photo management for the Photos app",
+	"main": "service.js",
+	"license": "Apache-2.0",
+	"private": true,
+	"engines": {
+		"node": ">=20"
+	},
+	"scripts": {
+		"test": "node --test --test-timeout=30000 tests/*.test.js"
+	}
+}
