@@ -5,6 +5,7 @@ This repository contains the following source folders with individual README fil
 * com.palm.service.calendar.reminders
 * com.palm.service.contacts
 * com.palm.service.contacts.linker
+* com.palm.service.photos
 * mojomail 
 
 ## Dependencies

@@ -1,0 +1,31 @@
+{
+	"photosservice.operation": [
+		"com.palm.service.photos/hello",
+		"com.palm.service.photos/getAccountsCapability",
+		"com.palm.service.photos/subscribeToAccountsInfo",
+		"com.palm.service.photos/remoteSyncAlbums",
+		"com.palm.service.photos/facebookSyncAlbums",
+		"com.palm.service.photos/syncSingleAccount",
+		"com.palm.service.photos/onEnabled",
+		"com.palm.service.photos/onCredentialsChanged",
+		"com.palm.service.photos/onDelete",
+		"com.palm.service.photos/facebookClearCache",
+		"com.palm.service.photos/generateThumbnails",
+		"com.palm.service.photos/cacheThumbnails",
+		"com.palm.service.photos/generateImgForBigView",
+		"com.palm.service.photos/facebookGenerateImgForBigView",
+		"com.palm.service.photos/getPhotoComments",
+		"com.palm.service.photos/facebookGetPhotoComments",
+		"com.palm.service.photos/addPhotoComments",
+		"com.palm.service.photos/facebookAddPhotoComments",
+		"com.palm.service.photos/createAlbum",
+		"com.palm.service.photos/addAlbum",
+		"com.palm.service.photos/deleteAlbum",
+		"com.palm.service.photos/renameAlbum",
+		"com.palm.service.photos/addPhotos",
+		"com.palm.service.photos/deletePhotos",
+		"com.palm.service.photos/cleanupCache",
+		"com.palm.service.photos/rmLeftOvers",
+		"com.palm.service.photos/quit"
+	]
+}

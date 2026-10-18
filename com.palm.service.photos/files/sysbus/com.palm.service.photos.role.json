@@ -1,0 +1,11 @@
+{
+	"appId": "com.palm.service.photos",
+	"allowedNames": ["com.palm.service.photos"],
+	"trustLevel": "oem",
+	"type": "regular",
+	"permissions": [{
+		"service": "com.palm.service.photos",
+		"inbound": ["*"],
+		"outbound": ["*"]
+	}]
+}
