@@ -490,7 +490,45 @@ var autolinker = autolinker || new Autolinker();
 var jobIdGenerator = jobIdGenerator || new JobIdGenerator();
 var yieldController = yieldController || new YieldController();
 var autoLinkerRunning = autoLinkerRunning || false;
+var autolinkWaiters = autolinkWaiters || [];
 var timingRecorder;
+
+// One autolink at a time. A watch firing while another autolink runs (two
+// watches on com.palm.contact:1, or the watch and forceAutolink) used to hit
+// an assert in run(); its complete() then re-armed linkerWatch with no
+// revision ("val" left out of the query), db8 refused that watch, and the
+// activity ended: the linker never ran again until it was recreated. Now the
+// second run waits, still holding its activity, so its watch is not re-armed
+// before the first one is done.
+function acquireAutolinker() {
+	var future = new Future();
+	
+	if (autoLinkerRunning) {
+		console.log("The autolinker is busy - this run waits for it");
+		autolinkWaiters.push(future);
+	} else {
+		autoLinkerRunning = true;
+		future.result = true;
+	}
+	
+	return future;
+}
+
+// Hands the autolinker to the next waiting run, or marks it idle.
+function releaseAutolinker() {
+	var next = autolinkWaiters.shift();
+	
+	if (next) {
+		next.result = true;
+	} else {
+		autoLinkerRunning = false;
+	}
+}
+
+// A revision a db8 query can take: the watch's own number, -1 (everything) otherwise.
+function watchRevision(inRev) {
+	return (typeof inRev === "number" && isFinite(inRev)) ? inRev : -1;
+}
 
 //
 // Autolinker hack on boot method. Please take me out when done!!!!!!!!
@@ -518,16 +556,21 @@ function ForceAutolinkerAssistant() {
 	
 	return {
 		run: function (future) {
-			Assert.requireFalse(autoLinkerRunning, "The autolinker was called to run autolink when it is already performing an autolink!!!!!");
-			autoLinkerRunning = true;
-			future.nest(autolinker.forceAutolink(this.controller, jobId));
+			var acquired = acquireAutolinker();
+			
+			acquired.then(this, function () {
+				var dummy = acquired.result;
+				
+				return autolinker.forceAutolink(this.controller, jobId);
+			});
+			future.nest(acquired);
 		},
 		"yield": function () {
 			yieldController.addJobToYield(jobId);
 		},
 		complete: function (activity) {
 			// normally, would modify activity and complete with restart
-			autoLinkerRunning = false;
+			releaseAutolinker();
 			return;
 		}
 	};
@@ -542,11 +585,18 @@ function UpdatedDBLinkAssistant() {
 	
 	return {
 		run: function (future) {
-			Assert.requireFalse(autoLinkerRunning, "The autolinker was called to run autolink when it is already performing an autolink!!!!!");
-			autoLinkerRunning = true;
+			var acquired;
+			
 			console.log("From autolink watch callback - Rev: " + this.controller.args.revChangedStart);
-			this.controller.lastProcessedContactRevId = this.controller.args.revChangedStart ? this.controller.args.revChangedStart : -1;
-			future.nest(autolinker.dbUpdatedRelinkChanges(this.controller, jobId));
+			// Set before anything can fail: complete() re-arms the watch with it.
+			this.controller.lastProcessedContactRevId = watchRevision(this.controller.args.revChangedStart);
+			acquired = acquireAutolinker();
+			acquired.then(this, function () {
+				var dummy = acquired.result;
+				
+				return autolinker.dbUpdatedRelinkChanges(this.controller, jobId);
+			});
+			future.nest(acquired);
 		},
 		"yield": function () {
 			console.log("Autolinker received a request to yield!!!");
@@ -560,9 +610,14 @@ function UpdatedDBLinkAssistant() {
 			});
 			
 			future.then(this, function () {
-				var dummy = future.result;
+				try {
+					var dummy = future.result;
+				} catch (e) {
+					console.error("syncDone plugins failed: " + e);
+				}
 				
-				autoLinkerRunning = false;
+				// Whatever the plugins did, the next run gets its turn and the watch is re-armed.
+				releaseAutolinker();
 				return Autolinker.restartActivityUsingRevisionNumber(activity._activityId, this.controller.lastProcessedContactRevId);
 			});
 			
