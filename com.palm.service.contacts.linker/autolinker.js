@@ -1738,6 +1738,13 @@ Autolinker.prototype.getDeletedContactsAboveRevToRemove = function (highestRev) 
 Autolinker.restartActivityUsingRevisionNumber = function (activityId, revisionNumber) {
 	var future = new Future();
 	
+	// A watch query without a number in "val" is refused by db8, and the
+	// activity then ends for good; -1 re-reads everything but keeps it alive.
+	if (typeof revisionNumber !== "number" || !isFinite(revisionNumber)) {
+		console.error("restartActivityUsingRevisionNumber: no revision (" + revisionNumber + "), watching from -1");
+		revisionNumber = -1;
+	}
+	
 	future.now(function () {
 		var params = {
 			activityId: activityId,
