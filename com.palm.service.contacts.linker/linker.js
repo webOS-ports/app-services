@@ -525,6 +525,27 @@ function releaseAutolinker() {
 	}
 }
 
+// Runs work() (which returns a Future) holding the autolinker, and hands it on
+// when the work is done, whether it succeeded or threw. The lock is not left
+// to complete(): MojoService calls that only for a command with an activity
+// (not a forceAutolink from the bus), and also for a callback whose adopt
+// failed, which never ran and so never held the lock.
+function withAutolinker(work) {
+	var future = acquireAutolinker();
+
+	future.then(function () {
+		var dummy = future.result;
+
+		return work();
+	});
+	future.then(function () {
+		releaseAutolinker();
+		return future.result;
+	});
+
+	return future;
+}
+
 // A revision a db8 query can take: the watch's own number, -1 (everything) otherwise.
 function watchRevision(inRev) {
 	return (typeof inRev === "number" && isFinite(inRev)) ? inRev : -1;
@@ -556,21 +577,17 @@ function ForceAutolinkerAssistant() {
 	
 	return {
 		run: function (future) {
-			var acquired = acquireAutolinker();
-			
-			acquired.then(this, function () {
-				var dummy = acquired.result;
-				
-				return autolinker.forceAutolink(this.controller, jobId);
-			});
-			future.nest(acquired);
+			var controller = this.controller;
+
+			future.nest(withAutolinker(function () {
+				return autolinker.forceAutolink(controller, jobId);
+			}));
 		},
 		"yield": function () {
 			yieldController.addJobToYield(jobId);
 		},
 		complete: function (activity) {
 			// normally, would modify activity and complete with restart
-			releaseAutolinker();
 			return;
 		}
 	};
@@ -581,22 +598,20 @@ function ForceAutolinkerAssistant() {
 //
 
 function UpdatedDBLinkAssistant() {
-	var jobId = jobIdGenerator.generateJobId();
-	
+	var jobId = jobIdGenerator.generateJobId(),
+		ran = false;
+
 	return {
 		run: function (future) {
-			var acquired;
-			
-			console.log("From autolink watch callback - Rev: " + this.controller.args.revChangedStart);
+			var controller = this.controller;
+
+			ran = true;
+			console.log("From autolink watch callback - Rev: " + controller.args.revChangedStart);
 			// Set before anything can fail: complete() re-arms the watch with it.
-			this.controller.lastProcessedContactRevId = watchRevision(this.controller.args.revChangedStart);
-			acquired = acquireAutolinker();
-			acquired.then(this, function () {
-				var dummy = acquired.result;
-				
-				return autolinker.dbUpdatedRelinkChanges(this.controller, jobId);
-			});
-			future.nest(acquired);
+			controller.lastProcessedContactRevId = watchRevision(controller.args.revChangedStart);
+			future.nest(withAutolinker(function () {
+				return autolinker.dbUpdatedRelinkChanges(controller, jobId);
+			}));
 		},
 		"yield": function () {
 			console.log("Autolinker received a request to yield!!!");
@@ -604,7 +619,14 @@ function UpdatedDBLinkAssistant() {
 		},
 		complete: function (activity) {
 			var future = new Future();
-			
+
+			// A repeated callback whose adopt failed: the activity belongs to
+			// the run that adopted it, and only that one may re-arm it.
+			if (!ran) {
+				console.log("This callback did not adopt linkerWatch - leaving it to the run that did");
+				return;
+			}
+
 			future.now(this, function () {
 				return this.controller.service.assistant.dispatchToPlugins("syncDone");
 			});
@@ -616,8 +638,7 @@ function UpdatedDBLinkAssistant() {
 					console.error("syncDone plugins failed: " + e);
 				}
 				
-				// Whatever the plugins did, the next run gets its turn and the watch is re-armed.
-				releaseAutolinker();
+				// Whatever the plugins did, the watch is re-armed.
 				return Autolinker.restartActivityUsingRevisionNumber(activity._activityId, this.controller.lastProcessedContactRevId);
 			});
 			
