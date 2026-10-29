@@ -220,10 +220,38 @@ function createAutolinker({db, persons, rankers, log = console}) {
 		return newPersonFor(contact, listSortOrder);
 	}
 
+	/*
+		Of the deleted contacts of a page, those some person still holds (one
+		find), or null to look each one up. A deleted contact no person holds
+		has nothing to be done; only a merge moves a contact to another person,
+		and it moves it from one that held it.
+	*/
+	async function deletedHeld(contacts) {
+		const ids = contacts.filter(c => c._del).map(c => c._id);
+		if (ids.length < 2) {
+			return null;
+		}
+		try {
+			const held = new Set();
+			for (const p of await db.find({from: persons.KIND, where: [{prop: 'contactIds', op: '=', val: ids}], select: ['contactIds']})) {
+				for (const id of p.contactIds || []) {
+					held.add(id);
+				}
+			}
+			return held;
+		} catch (e) {
+			return null;
+		}
+	}
+
 	// Autolinker.getTheNextContactAndProcess.
-	async function processContact(contact, state, listSortOrder) {
+	async function processContact(contact, state, listSortOrder, held) {
 		if (state.highestRev < contact._rev) {
 			state.highestRev = contact._rev;
+		}
+		if (contact._del && held && !held.has(contact._id)) {
+			state.processed += 1;
+			return;
 		}
 		const {person, contacts} = await personOf(contact);
 		state.processed += 1;
@@ -263,6 +291,7 @@ function createAutolinker({db, persons, rankers, log = console}) {
 		let failure = null, page = await db.findPage(query), previous;
 		for (;;) {
 			const contacts = page.results;
+			const held = await deletedHeld(contacts);
 			for (let i = 0; i < contacts.length && !state.yielding; i++) {
 				// What failed before is dropped once the next contact comes up.
 				failure = null;
@@ -272,7 +301,7 @@ function createAutolinker({db, persons, rankers, log = console}) {
 					break;
 				}
 				try {
-					await processContact(contacts[i], state, listSortOrder);
+					await processContact(contacts[i], state, listSortOrder, held);
 				} catch (e) {
 					log.error('linker: contact ' + contacts[i]._id + ' failed: ' + ((e && e.stack) || e));
 					failure = e;

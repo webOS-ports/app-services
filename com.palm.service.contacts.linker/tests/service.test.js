@@ -372,6 +372,24 @@ describe('the linker', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
+	it('looks up only the persons of deleted contacts that a person still holds', async () => {
+		const env = await boot();
+		const [a, b, c, ...gone] = await env.putContacts([name('Ann', 'Lee'), name('Ann', 'Lee'), name('Bob', 'Ray'),
+			name('Cy', 'Day'), name('Di', 'Fox'), name('Ed', 'Gray'), name('Flo', 'Hu'), name('Gus', 'Ito')]);
+		await env.ask('forceAutolink');
+		await env.db.del(gone.map(g => g._id));
+		await env.ask('forceAutolink');
+		await env.db.del([a._id, c._id]);
+		env.calls.length = 0;
+		await env.ask('forceAutolink');
+		assert.deepEqual(env.personOf(b._id).contactIds, [b._id]);
+		assert.equal(env.persons().length, 1);
+		const alone = env.calls.filter(k => k.method === 'find' && k.args.query.from === 'com.palm.person:1' &&
+			k.args.query.where[0].prop === 'contactIds' && !Array.isArray(k.args.query.where[0].val));
+		assert.deepEqual(alone.map(k => k.args.query.where[0].val).sort(), [a._id, b._id, c._id].sort());
+		env.stop();
+	});
+
 	it('deleteOrphanedPerson answers at once, then deletes the person if it has no contacts', async () => {
 		const env = await boot();
 		const [r] = await env.db.put([{_kind: 'com.palm.person:1', contactIds: []}]);
