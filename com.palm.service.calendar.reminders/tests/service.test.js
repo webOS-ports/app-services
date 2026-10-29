@@ -167,6 +167,17 @@ describe('the reminders service', () => {
 		assert.equal(env.byName('wake').callback.params.showTime, T0 + 45 * MIN);
 	});
 
+	it('bug 11: with getSystemTime failing, or naming no zone, the process\'s own zone is taken', async () => {
+		for (const reply of [undefined, {returnValue: true, utc: 1}]) {
+			const env = await boot({now: T0, tz: 'Europe/Amsterdam'});
+			env.world.fail('com.palm.systemservice', 'time/getSystemTime', reply ? {n: 9, reply} : {n: 9});
+			await env.world.db.put([event({_id: 'a', dtstart: T0 + HOUR, dtend: T0 + 2 * HOUR, trigger: '-PT15M'})]);
+			assert.equal((await env.world.request('onInit', {}, {waitMs: 1500})).returnValue, true);
+			const r = env.world.state().reminders.filter(x => !x._del);
+			assert.deepEqual(r.map(x => [x.eventId, x.showTime]), [['a', T0 + 45 * MIN]]);
+		}
+	});
+
 	it('a missing argument is the thrown string of the old service', async () => {
 		const env = await start([]);
 		const reply = await env.world.request('onSnooze', {});

@@ -99,8 +99,6 @@ these numbers):
    `autoCloseTime`; `onWake` then fails on it, and none of the reminders
    of that wake is shown.
 10. `onInit` reads the first 500 events only (db8's page).
-11. If `getSystemTime` fails, or answers no time zone, the time zone manager
-    waits for it for ever, and the command with it.
 12. mojoservice made an activity for each call that brought none, and left
     the ones of `onWake`, `onAutoClose` and `onDBChanged` behind.
 13. An exception date of a daily event (or of a weekly one on several days)
@@ -142,6 +140,10 @@ Mended since the first version:
     for ever (11), so every scan of events with an alarm ended in the 60 s
     command timeout: no reminder was ever stored, nor shown. Both groups
     are now named.
+11. If `getSystemTime` failed, or answered no time zone, the time zone
+    manager waited for it for ever, and the command with it. It now takes
+    the zone the process runs in (the device's `/etc/localtime`, which is
+    what systemservice reports), and keeps the subscription for changes.
 
 These things deliberately differ from the old service:
 

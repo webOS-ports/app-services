@@ -560,32 +560,52 @@ function createTimezoneManager({call, subscribe, log = console}) {
 		tm.gotLocalTz = false;
 	}
 
+	// Bug 11: with no zone from systemservice, the zone the process runs in (the device's /etc/localtime).
+	function ownTimezone() {
+		return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Etc/UTC';
+	}
+
 	/*
 		Resolves once the system time zone is known. The first caller asks
 		getSystemTime; on its answer every caller waiting goes on, and the
-		subscription that keeps the zone current is made. As in the framework,
-		a getSystemTime that fails, or one that names no zone, leaves every
-		caller waiting for good (README.md).
+		subscription that keeps the zone current is made. A getSystemTime
+		that fails, or one that names no zone, left every caller waiting for
+		good in the framework (README.md, bug 11); the process's own zone is
+		taken then.
 	*/
 	function setup() {
 		if (!tm.timezone) {
 			const p = new Promise(resolve => tm.waiters.push(resolve));
 			if (!tm.requested) {
 				tm.requested = true;
-				call(SYSTEM + '/time/getSystemTime', {subscribe: false}).then(result => {
-					setTimezone(result);
+				const release = () => {
 					let w;
 					while ((w = tm.waiters.pop())) {
 						w();
 					}
+				};
+				call(SYSTEM + '/time/getSystemTime', {subscribe: false}).then(result => {
+					if (!(result && result.timezone)) {
+						log.error('calendar: getSystemTime named no time zone; taking ' + ownTimezone());
+					}
+					setTimezone(result && result.timezone ? result : {timezone: ownTimezone()});
+					release();
 					subscribe(SYSTEM + '/time/getSystemTime', {subscribe: true}, {
 						onEvent: r => {
-							if (r && r.returnValue !== false) {
+							if (r && r.returnValue !== false && r.timezone) {
 								setTimezone(r);
 							}
 						}
-					}).then(sub => setTimezone(sub.first), () => {});
-				}, e => log.error('calendar: getSystemTime failed: ' + ((e && e.message) || e)));
+					}).then(sub => {
+						if (sub.first && sub.first.timezone) {
+							setTimezone(sub.first);
+						}
+					}, () => {});
+				}, e => {
+					log.error('calendar: getSystemTime failed: ' + ((e && e.message) || e) + '; taking ' + ownTimezone());
+					setTimezone({timezone: ownTimezone()});
+					release();
+				});
 			}
 			return p;
 		}
