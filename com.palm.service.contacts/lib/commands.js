@@ -24,7 +24,7 @@
 	unfavoritePerson        {personId}
 	setCroppedContactPhoto  {personId, path, cropInfo, photoType}
 	refetchPhoto            {contactId, photoId}
-	findPersonByPhone       {phoneNumber, params: {returnAllMatches, includeMatchingItem, mcc}}
+	findPersonByPhone       {phoneNumber, params: {returnAllMatches, includeMatchingItem, mcc}}: keyed as the linker keys a number
 	sortOrderChanged        the sort-order watch's callback: every person's sortKey again
 	SetUpWatch              creates that watch
 	deleteContactImage      {path}
@@ -37,6 +37,7 @@ const mojo = require('./mojo');
 const {isObject, entry, clone, PERSON_KIND, CONTACT_KIND} = require('./records');
 const vcard = require('./vcard');
 const {SUPPORTED_FAVORITE_TYPES} = require('./person');
+const {createModel} = require('./model');
 const {KIND: PREFS_KIND, PREF} = require('./prefs');
 const {MEDIA_DIR} = require('./photos');
 
@@ -133,7 +134,21 @@ function batchWriter(db, log, {deep = false, size = 500} = {}) {
 	return {write, commit};
 }
 
-function createCommands({db, call, persons, photos, prefs, model, G, log = console, timeoutsS = {},
+/*
+	The key a phone number is looked up by: the linker's search form
+	without its closing "-" ("-<the national number's digits after the
+	leading ones, reversed>"), which is a prefix of the normalizedValue the
+	linker stores for the same number and of none for a number that only
+	ends the same way. The rule of the linker's lookupKey (lib/rankers.js,
+	"similar mobile number"), on the same normalizePhoneNumber; null for a
+	value with no digits, which is not looked up (C12).
+*/
+function phoneLookupKey(model, value) {
+	const key = model.normalizePhoneNumber(value, true).slice(0, -1);
+	return /^-\d+$/.test(key) ? key : null;
+}
+
+function createCommands({db, call, persons, photos, prefs, model, G, P, log = console, timeoutsS = {},
 	photoDir = MEDIA_DIR}) {
 	const exporter = vcard.createExporter({model});
 
@@ -479,12 +494,12 @@ function createCommands({db, call, persons, photos, prefs, model, G, log = conso
 		if (!parsed) {
 			return empty();
 		}
-		const normalized = model.normalizePhoneNumber(parsed, true);
-		if (!normalized) {
+		const key = phoneLookupKey(model, phoneNumber);
+		if (!key) {
 			return empty();
 		}
 		const found = (await db.findPage({from: PERSON_KIND,
-			where: [{prop: 'phoneNumbers.normalizedValue', op: '%', val: normalized}]})).results;
+			where: [{prop: 'phoneNumbers.normalizedValue', op: '%', val: key}]})).results;
 		if (!found || found.length === 0) {
 			return empty();
 		}
@@ -510,19 +525,34 @@ function createCommands({db, call, persons, photos, prefs, model, G, log = conso
 		return matches.map(m => m.match);
 	}
 
+	/*
+		A stored number's normalizedValue in that region: the form the linker
+		writes (lib/model.js normalizePhoneNumber, "+-<cc>-<leading digits>-
+		<rest>-" reversed), not the old "-<subscriber number>---" made from
+		Globalization's parse (C12). A value that is not a string goes the old
+		way, so it fails or is kept as it did.
+	*/
+	function normalizedIn(regional, value, region) {
+		if (typeof value === 'string') {
+			return regional.normalizePhoneNumber(value);
+		}
+		return model.normalizePhoneNumber(G.Phone.parsePhoneNumber(value, 'xx_' + region));
+	}
+
 	async function updatePersonLocaleAll(params) {
 		const region = params.locale || G.Locale.getCurrentPhoneRegion();
 		const writer = batchWriter(db, log, {deep: true});
 		const started = Date.now();
 		prefs.load().then(p => p.set(PREF.contactsPhoneRegion, region), e => log.error(String(e)));
+		// The linker's normaliser for the new region (C12).
+		const regional = createModel({G, P, phoneRegion: String(region)});
 		const query = {select: ['_id', 'phoneNumbers'], from: PERSON_KIND, limit: 500};
 		for (;;) {
 			const page = await db.findPage(Object.assign({}, query));
 			for (const person of page.results) {
 				const numbers = clone(person.phoneNumbers) || [];
 				for (let i = 0; i < numbers.length; i += 1) {
-					const parsed = G.Phone.parsePhoneNumber(numbers[i].value, 'xx_' + region);
-					numbers[i].normalizedValue = model.normalizePhoneNumber(parsed);
+					numbers[i].normalizedValue = normalizedIn(regional, numbers[i].value, region);
 				}
 				writer.write(person, 'phoneNumbers', numbers);
 			}
