@@ -64,10 +64,13 @@ describe('alarm', () => {
 		assert.equal(parseDuration('-P1W', start), start - 7 * DAY);
 	});
 
-	it('parseDuration, old bug 7: four digits are no offset, and of W and D only the last counts', () => {
+	it('parseDuration, bug 7: any number of digits, and weeks and days added up', () => {
 		const start = Date.UTC(2026, 9, 23, 12, 0);
-		assert.equal(parseDuration('-PT1440M', start), start);
-		assert.equal(parseDuration('-P1W2D', start), start - 2 * DAY);
+		assert.equal(parseDuration('-PT1440M', start), start - DAY);
+		assert.equal(parseDuration('-PT1000S', start), start - 1000 * 1000);
+		assert.equal(parseDuration('-P1W2D', start), start - 9 * DAY);
+		assert.equal(parseDuration('P1DT2H', start), start + DAY + 2 * 3600000);
+		assert.equal(parseDuration('none', start), 0);
 	});
 
 	it('calculateAlarmTime: a DATE-TIME trigger is that time, a duration is from the start', () => {

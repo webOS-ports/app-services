@@ -88,10 +88,6 @@ these numbers):
    which is never true where DST spans the new year (the southern
    hemisphere), so an event in such a zone, seen from a device in another
    zone, repeats an hour off half the year.
-7. The alarm duration parser takes one to three digits per part: `-PT1440M`
-   is no offset at all, so a "one day before" alarm written that way goes
-   off at the start of the event. Of weeks and days only the last counts
-   (`-P1W2D` is two days).
 8. The revision reached is the highest `_rev` of the events read, which can
    jump past events not read: more than 500 changes at once (db8's page),
    or the deleted ones' revision ahead of the changed ones'.
@@ -145,6 +141,11 @@ Mended since the first version:
    `autoCloseTime`; `onWake` then failed on it, and none of the reminders
    of that wake was shown. Such an event now lasts no time: its reminder
    ends at its start and closes 15 minutes after it, as for any short event.
+7. The alarm duration parser took one to three digits per part:
+   `-PT1440M` was no offset at all, so a "one day before" alarm written that
+   way went off at the start of the event; and of weeks and days only the
+   last counted (`-P1W2D` was two days). Now any number of digits is read,
+   and weeks and days are added up.
 
 These things deliberately differ from the old service:
 
