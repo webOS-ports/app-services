@@ -3,8 +3,9 @@
 
 /*
 	A stand-in palmbus for running the service on the host: outgoing calls go
-	to onCall(uri, args, sender) -> a reply, an array of replies, or undefined
-	(never replies); request() delivers a call to a registered service.
+	to onCall(uri, args, sender) -> a reply, an array of replies (a promise in
+	it is a reply sent when it resolves), or undefined (never replies);
+	request() delivers a call to a registered service.
 */
 'use strict';
 
@@ -50,7 +51,8 @@ function createPalmbus(onCall) {
 			if (r === undefined) {
 				return;
 			}
-			for (const one of Array.isArray(r) ? r : [r]) {
+			for (const next of Array.isArray(r) ? r : [r]) {
+				const one = await next;
 				if (req.cancelled) {
 					return;
 				}

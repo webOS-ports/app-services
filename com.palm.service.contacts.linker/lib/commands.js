@@ -213,10 +213,31 @@ function createCommands({db, call, persons, autolinker, clb, saveNew, log = cons
 		getUnlinkLinks: clbLookup()
 	};
 
+	/*
+		A linkerWatch callback for the activity and _rev of one that is still
+		running is the same callback delivered again (the VM's activitymanager
+		did that): it runs nothing. Now that an adopt waits (lib/mojo.js), it
+		would otherwise run again from the old _rev once the first lets go.
+		The callback serial cannot tell them apart: activitymanager seeds it
+		from the time in seconds, so callbacks within one second share it.
+	*/
+	const running = new Set();
+	function claimRelink(params) {
+		const key = params.$activity.activityId + ' ' + params.revChangedStart;
+		if (running.has(key)) {
+			return 'callback for activity ' + params.$activity.activityId + ' from _rev ' +
+				params.revChangedStart + ' delivered again while it runs';
+		}
+		running.add(key);
+		return () => running.delete(key);
+	}
+
 	const timeouts = {forceAutolink: LONG_TIMEOUT_S, dbUpdatedRelinkChanges: LONG_TIMEOUT_S};
+	const claims = {dbUpdatedRelinkChanges: claimRelink};
 	const methods = {};
 	for (const name of Object.keys(commands)) {
-		methods[name] = mojo.method(SERVICE, name, commands[name], {timeoutS: timeouts[name], log, subscribe: call.subscribe});
+		methods[name] = mojo.method(SERVICE, name, commands[name],
+			{timeoutS: timeouts[name], log, subscribe: call.subscribe, claim: claims[name]});
 	}
 	return methods;
 }

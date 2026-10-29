@@ -84,51 +84,104 @@ function timeoutError(service, command) {
 }
 
 /*
-	A command given an $activity takes it on first, as mojoservice's
-	CommandController did. activitymanager calling back: adopt it, which
-	makes the activity ours to complete, and answer at once; an adopt that
-	fails (a callback delivered again, while the first still has the
-	activity) runs nothing and answers {status: "adopt failed"}, as an error
-	would make activitymanager cancel the activity. Anyone else passing one:
-	monitor it, and fail the command if that fails. -> the subscription to
-	end when the command is done, or a reply to give instead of running.
+	A command given an $activity takes it on first. activitymanager calling
+	back: adopt it, which makes the activity ours to complete, and answer at
+	once. The adopt waits (wait:true) when the activity is still held: after
+	a run completes it with restart:true and contacts are left, activitymanager
+	calls back at once, before that run has let go of it. mojoservice did
+	not wait, so that adopt failed, the callback ran nothing and no other
+	came (README.md tells how linkerWatch stopped). Waiting, the callback
+	runs on the "orphan" event that hands it the activity; a "cancel",
+	"complete" or "stop" before it, an error, or no hand-over within the
+	command's time, and it runs nothing and answers {status: "adopt failed"},
+	as an error would make activitymanager cancel the activity. Anyone else
+	passing one: monitor it, and fail the command if that fails. -> the
+	subscription to end when the command is done, or a reply to give
+	instead of running.
 */
-async function takeActivity(subscribe, params, ctx) {
+async function takeActivity(subscribe, params, ctx, waitMs) {
 	const a = params.$activity;
 	const adopt = fromActivityManager(ctx.sender);
 	const args = {activityId: a.activityId, subscribe: true};
-	if (adopt && a.callback && a.callback.serial) {
-		args.serial = a.callback.serial;
+	if (adopt) {
+		args.wait = true;
+		if (a.callback && a.callback.serial) {
+			args.serial = a.callback.serial;
+		}
 	}
 	const uri = AM + '/' + (adopt ? 'adopt' : 'monitor');
-	try {
-		const held = await subscribe(uri.replace(/^palm:/, 'luna:'), args);
-		if (adopt && ctx.replyNow) {
-			ctx.replyNow({returnValue: true});
-		}
-		return {held};
-	} catch (e) {
+	const failed = (e, text) => {
 		const err = new Error(uri + ' ' + JSON.stringify(args) + ': ' +
-			((e && e.errorText) || (e && e.message) || 'Unknown PalmCall failure'));
+			(text || (e && e.errorText) || (e && e.message) || 'Unknown PalmCall failure'));
 		err.errorCode = typeof (e && e.errorCode) === 'number' ? e.errorCode : -1;
 		return {instead: adopt ? reply({status: 'adopt failed', error: String(err)}) : exception(err)};
+	};
+	let handOver = null;
+	const handedOver = new Promise(resolve => {
+		handOver = resolve;
+	});
+	const onEvent = e => {
+		if (e.returnValue === false) {
+			handOver({e, text: e.errorText || 'the subscription failed'});
+		} else if (e.event === 'orphan') {
+			handOver({});
+		} else if (e.event === 'cancel' || e.event === 'complete' || e.event === 'stop') {
+			handOver({text: '"' + e.event + '" while waiting to adopt'});
+		}
+	};
+	let held;
+	try {
+		held = await subscribe(uri.replace(/^palm:/, 'luna:'), args, {onEvent});
+	} catch (e) {
+		return failed(e);
 	}
+	if (adopt && ctx.replyNow) {
+		ctx.replyNow({returnValue: true});
+	}
+	if (adopt && held.first && held.first.adopted === false) {
+		let timer;
+		const late = new Promise(resolve => {
+			timer = setTimeout(() => resolve({text: 'not handed over in ' + Math.round(waitMs / 1000) + ' s'}), waitMs);
+			if (timer.unref) {
+				timer.unref();
+			}
+		});
+		const got = await Promise.race([handedOver, late]);
+		clearTimeout(timer);
+		if (got.text) {
+			held.cancel();
+			return failed(got.e, got.text);
+		}
+	}
+	return {held};
 }
 
 /*
 	A bus method ({handler, raw, timeoutMs}) that replies as mojoservice did:
 	run(params) is the command; it gets timeoutS seconds. subscribe (the
-	bus's) takes on an $activity the call brings (takeActivity).
+	bus's) takes on an $activity the call brings (takeActivity). claim, if
+	given, is asked first for a call that brings one: -> a function to call
+	when the command is done, or a status to answer with instead of running.
 */
-function method(service, name, run, {timeoutS = DEFAULT_TIMEOUT_S, log = console, subscribe} = {}) {
+function method(service, name, run, {timeoutS = DEFAULT_TIMEOUT_S, log = console, subscribe, claim} = {}) {
 	return {
 		raw: true,
 		timeoutMs: (timeoutS + 5) * 1000,
 		handler: async (params, ctx = {}) => {
-			let taken = {};
+			let taken = {}, release = null;
 			if (subscribe && params && params.$activity && params.$activity.activityId !== undefined) {
-				taken = await takeActivity(subscribe, params, ctx);
+				if (claim) {
+					release = claim(params, ctx);
+					if (typeof release === 'string') {
+						log.error(service + ': ' + name + ': ' + release);
+						return reply({status: release});
+					}
+				}
+				taken = await takeActivity(subscribe, params, ctx, timeoutS * 1000);
 				if (taken.instead) {
+					if (release) {
+						release();
+					}
 					log.error(service + ': ' + name + ': ' + (taken.instead.error || taken.instead.errorText));
 					return taken.instead;
 				}
@@ -147,6 +200,9 @@ function method(service, name, run, {timeoutS = DEFAULT_TIMEOUT_S, log = console
 				return exception(e);
 			} finally {
 				clearTimeout(timer);
+				if (release) {
+					release();
+				}
 				if (taken.held) {
 					taken.held.cancel();
 				}
