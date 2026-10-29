@@ -323,15 +323,15 @@ describe('saveNewPersonAndContacts', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
-	it('gives the second of two contacts that have an _id a new one (README: Q7.5)', async () => {
-		// The loop that takes out the contacts with an _id splices as it goes and skips the one after.
+	it('keeps the _id of every contact that has one, also of one right after another (README: Q7.5)', async () => {
 		const env = await boot();
 		const [a, b] = await env.putContacts([name('Ann', 'Lee'), name('Bob', 'Kay')]);
 		const r = await env.ask('saveNewPersonAndContacts', {person: {}, contacts: [
-			{_id: a._id, _kind: 'com.palm.contact.palmprofile:1'}, {_id: b._id, _kind: 'com.palm.contact.palmprofile:1'}]});
+			{_id: a._id, _kind: 'com.palm.contact.palmprofile:1'}, {_id: b._id, _kind: 'com.palm.contact.palmprofile:1'},
+			{_kind: 'com.palm.contact.palmprofile:1', name: {givenName: 'Cy', familyName: 'Bos'}}]});
 		assert.equal(r.contacts.length, 1);
-		assert.notEqual(r.contacts[0]._id, b._id);
-		assert.deepEqual(r.person.contactIds, [a._id, r.contacts[0]._id]);
+		assert.ok(![a._id, b._id].includes(r.contacts[0]._id));
+		assert.deepEqual(r.person.contactIds, [a._id, b._id, r.contacts[0]._id]);
 		env.stop();
 	});
 
