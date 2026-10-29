@@ -17,6 +17,8 @@
 	which ones it changed: a person already in db8 is saved with a merge of
 	those only, as the framework merged its "dirty" fields. So a person whose
 	contacts no longer have an organization keeps the one it had, as before.
+	It also leaves the link hashes it found no speed-dial backup for
+	(noSpeedDialBackup), which the next save does not look up again.
 */
 
 const crypto = require('crypto');
@@ -416,6 +418,9 @@ function createPersons({db, call, model, G, linkHash, log = console}) {
 		const hashes = await linkHashesOf(all);
 		const backups = (await db.findPage({from: SPEED_DIAL_BACKUP_KIND,
 			where: [{prop: 'contactBackupHash', op: '=', val: hashes}]})).results;
+		// The hashes with no backup, which the save that follows need not look up again.
+		const backedUp = new Set(backups.map(b => b.contactBackupHash));
+		person.noSpeedDialBackup = new Set(hashes.filter(h => !backedUp.has(h)));
 		// Each backup's own speed dials. The old code read the first backup's for every one.
 		for (const backup of backups) {
 			for (const sd of (backup.speedDials || [])) {
@@ -575,8 +580,16 @@ function createPersons({db, call, model, G, linkHash, log = console}) {
 				hashes.push(h);
 			}
 		}));
+		/*
+			With no speed dial to keep, only a backup there is needs work (it goes),
+			so a hash the fixup just found none for is not looked up again. Only the
+			linker writes these backups, and it has written none since.
+		*/
+		const none = person.noSpeedDialBackup;
+		person.noSpeedDialBackup = undefined;
+		const lookUp = speedDials.length === 0 && none ? hashes.filter(h => !none.has(h)) : hashes;
 		const work = [];
-		await Promise.all(hashes.map(async hash => {
+		await Promise.all(lookUp.map(async hash => {
 			const r = await db.findPage({from: SPEED_DIAL_BACKUP_KIND,
 				where: [{prop: 'contactBackupHash', op: '=', val: hash}]});
 			const backup = r.results[0] ? clone(r.results[0]) :
