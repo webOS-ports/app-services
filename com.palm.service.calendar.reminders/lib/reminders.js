@@ -170,7 +170,8 @@ function createReminders({db, call, events, log = console}) {
 	/*
 		The activity that calls `callback` at the first reminder's `field`
 		time: created, moved there (complete with restart), or completed when
-		there is none; its id kept in the status as `idField`.
+		there is none; its id kept in the status as `idField`. One that
+		activitymanager will not complete is created again, or cancelled.
 		-> {returnValue, status: "created" | "updated" | "completed" | "none"}
 	*/
 	async function scheduleActivity(reminders, {idField, field, name, description, callback, param}) {
@@ -181,6 +182,7 @@ function createReminders({db, call, events, log = console}) {
 			activityId = st.results[0][idField];
 		}
 		let method, args, statusAction = 'none';
+		let create = null;
 		if (!remindersLength) {
 			if (activityId) {
 				statusAction = 'completed';
@@ -191,6 +193,8 @@ function createReminders({db, call, events, log = console}) {
 			const date = reminders[0][field];
 			const dateString = utcDateString(date);
 			log.log('rmdrsvc: ' + name + ' at ' + dateString + ' / ' + date + ' / ' + reminders[0]._id);
+			create = {start: true, replace: true, activity: {name, description, type: {persist: true, foreground: true},
+				schedule: {start: dateString}, callback: {method: SELF + callback, params: {[param]: date}}}};
 			if (activityId) {
 				statusAction = 'updated';
 				method = 'complete';
@@ -199,18 +203,33 @@ function createReminders({db, call, events, log = console}) {
 			} else {
 				statusAction = 'created';
 				method = 'create';
-				args = {start: true, replace: true, activity: {name, description, type: {persist: true, foreground: true},
-					schedule: {start: dateString}, callback: {method: SELF + callback, params: {[param]: date}}}};
+				args = create;
 			}
 		}
-		const res = method ? await call(AM + method, args) : {returnValue: true};
-		const returnValue = res.returnValue;
-		// The old code's "the activitymanager call failed" (returnValue false) branch: such a call throws above.
+		let res = {returnValue: true};
+		if (method === 'complete') {
+			try {
+				res = await call(AM + method, args);
+			} catch (e) {
+				/*
+					Bug 1: activitymanager completes only a running activity. One
+					that is still waiting (or that it no longer knows) is replaced:
+					created again under its name, or, with no reminder to wait for,
+					cancelled.
+				*/
+				log.log('rmdrsvc: ' + name + ' ' + activityId + ' not completed (' + ((e && e.message) || e) + ')');
+				if (create) {
+					res = await call(AM + 'create', create);
+					statusAction = 'created';
+				} else {
+					await call(AM + 'cancel', {activityId}).catch(() => null);
+				}
+			}
+		} else if (method) {
+			res = await call(AM + method, args);
+		}
 		let merged;
-		if (returnValue === false) {
-			statusAction = 'failed';
-			merged = await db.merge(STATUS_QUERY, {[idField]: 0});
-		} else if (statusAction === 'none' || statusAction === 'completed') {
+		if (statusAction === 'none' || statusAction === 'completed') {
 			merged = await db.merge(STATUS_QUERY, {[idField]: 0});
 		} else if (statusAction === 'created') {
 			merged = await db.merge(STATUS_QUERY, {[idField]: res.activityId});
@@ -308,7 +327,17 @@ function createReminders({db, call, events, log = console}) {
 	*/
 	async function dbWatch({dbChangedActivityId, isUnitTest, lastRevNumber}) {
 		const {method, args} = dbWatchActivity(dbChangedActivityId, isUnitTest, lastRevNumber);
-		const res = await call(AM + method, args);
+		let res;
+		try {
+			res = await call(AM + method, args);
+		} catch (e) {
+			if (method !== 'complete') {
+				throw e;
+			}
+			// Bug 1: a watch that is waiting, or gone, cannot be completed: a new one takes its place.
+			log.log('rmdrsvc: watch ' + dbChangedActivityId + ' not completed (' + ((e && e.message) || e) + ')');
+			res = await call(AM + 'create', dbWatchActivity(0, isUnitTest, lastRevNumber).args);
+		}
 		let status, merged;
 		if (res.returnValue === true && res.activityId) {
 			status = 'created';

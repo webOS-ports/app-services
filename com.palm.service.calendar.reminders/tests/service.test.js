@@ -103,8 +103,7 @@ describe('the reminders service', () => {
 		env.clock.set(T0 + 45 * MIN);
 		await env.world.fireDue();
 		const r = env.reminder('s');
-		// The answer is old bug 1's (the autoclose activity is waiting; see below).
-		await env.world.request('onSnooze', {reminderId: r._id});
+		assert.equal((await env.world.request('onSnooze', {reminderId: r._id})).returnValue, true);
 		assert.equal(env.reminder('s').showTime, T0 + 50 * MIN);
 		assert.equal(env.byName('wake').schedule.start, '2026-10-23 12:50:00Z');
 		assert.equal(env.byName('wake').state, 'waiting');
@@ -112,18 +111,34 @@ describe('the reminders service', () => {
 		assert.equal(env.reminder('s').showTime, T0 + 46 * MIN);
 	});
 
-	it('old bug 1: a second snooze cannot move the waiting wake activity, and fails', async () => {
+	it('bug 1: a second snooze moves the wake that is waiting: it is created again', async () => {
 		const env = await start([event({_id: 's', dtstart: T0 + HOUR, dtend: T0 + 2 * HOUR, trigger: '-PT15M'})]);
 		env.clock.set(T0 + 45 * MIN);
 		await env.world.fireDue();
 		const r = env.reminder('s');
 		await env.world.request('onSnooze', {reminderId: r._id});
-		const reply = await env.world.request('onSnooze', {reminderId: r._id, snoozeDuration: 60000});
-		assert.equal(reply.returnValue, false);
-		assert.equal(reply.errorCode, -1000);
-		// The reminder is due at 12:46, the wake still at 12:50.
+		const before = env.byName('wake').id;
+		assert.equal((await env.world.request('onSnooze', {reminderId: r._id, snoozeDuration: 60000})).returnValue, true);
 		assert.equal(env.reminder('s').showTime, T0 + 46 * MIN);
-		assert.equal(env.byName('wake').schedule.start, '2026-10-23 12:50:00Z');
+		const wake = env.byName('wake');
+		assert.equal(wake.schedule.start, '2026-10-23 12:46:00Z');
+		assert.notEqual(wake.id, before);
+		assert.equal(env.world.activities.has(before), false);
+		assert.equal(env.world.state().status[0].wakeActivityId, wake.id);
+	});
+
+	it('bug 1: an activity someone cancelled is created again', async () => {
+		const env = await start([event({_id: 'a', dtstart: T0 + HOUR, dtend: T0 + 2 * HOUR, trigger: '-PT15M'})]);
+		env.world.activities.delete(env.byName('wake').id);
+		env.world.activities.delete(env.byName('dbchanged').id);
+		await env.world.db.put([event({_id: 'b', dtstart: T0 + 30 * MIN, dtend: T0 + HOUR, trigger: '-PT5M'})]);
+		assert.deepEqual(await env.world.request('onDBChanged', {}), {returnValue: true, wakeStatus: 'created',
+			autoCloseStatus: 'created', dbChangedStatus: 'created'});
+		assert.equal(env.byName('wake').schedule.start, '2026-10-23 12:25:00Z');
+		assert.equal(env.byName('dbchanged').state, 'waiting');
+		await env.world.db.put([event({_id: 'c', dtstart: T0 + 3 * HOUR, dtend: T0 + 4 * HOUR, trigger: '-PT5M'})]);
+		assert.equal((await env.world.fireWatches()).length, 1);
+		assert.ok(env.reminder('c'));
 	});
 
 	it('onDismiss removes the reminder; a repeating event gets its next one', async () => {
@@ -147,16 +162,16 @@ describe('the reminders service', () => {
 		assert.match(reply.exception, /^Missing args! Need reminderId\./);
 	});
 
-	it('onDBChanged: a deleted event is closed in the app (old bug 1: the waiting wake is not ended, nor the watch armed)', async () => {
+	it('onDBChanged: a deleted event is closed in the app, its wake cancelled, and the watch armed again', async () => {
 		const env = await start([event({_id: 'x', dtstart: T0 + 3 * HOUR, dtend: T0 + 4 * HOUR, trigger: '-PT15M'})]);
 		await env.world.db.del(['x']);
 		const fired = await env.world.fireWatches();
 		assert.equal(fired.length, 1);
 		assert.deepEqual(env.world.launches.map(l => l.params), [{alarmDeleted: ['x']}]);
 		assert.equal(env.reminder('x'), undefined);
-		assert.deepEqual(env.world.amLog[env.world.amLog.length - 1], {method: 'complete', args: {activityId: 101}});
-		assert.equal(env.byName('wake').state, 'waiting');
-		assert.equal(env.byName('dbchanged').state, 'running');
+		assert.equal(env.byName('wake'), undefined);
+		assert.equal(env.world.state().status[0].wakeActivityId, 0);
+		assert.equal(env.byName('dbchanged').state, 'waiting');
 	});
 
 	it('onDBChanged: an event added after the next wake gets its reminder', async () => {
@@ -173,15 +188,16 @@ describe('the reminders service', () => {
 		assert.equal(await env.world.request('onSnooze', {reminderId: 'R1'}, {waitMs: 1000}), 'NO REPLY');
 	});
 
-	it('old bug 1: an event earlier than the waiting wake fails the command, and the watch is not armed again', async () => {
+	it('bug 1: an event earlier than the waiting wake moves the wake, and the watch is armed again', async () => {
 		const env = await start([event({_id: 'late', dtstart: T0 + 5 * HOUR, dtend: T0 + 6 * HOUR, trigger: '-PT15M'})]);
 		await env.world.db.put([event({_id: 'soon', dtstart: T0 + HOUR, dtend: T0 + 2 * HOUR, trigger: '-PT15M'})]);
-		await env.world.fireWatches();
-		const last = env.world.amLog[env.world.amLog.length - 1];
-		assert.equal(last.method, 'complete');
-		assert.equal(last.args.activityId, env.byName('wake').id);
-		// The wake still points at the later event, and the watch is left running.
-		assert.equal(env.byName('wake').callback.params.showTime, T0 + 5 * HOUR - 15 * MIN);
-		assert.equal(env.byName('dbchanged').state, 'running');
+		const fired = await env.world.fireWatches();
+		assert.deepEqual(fired[0].reply, {returnValue: true});
+		assert.equal(env.byName('wake').callback.params.showTime, T0 + 45 * MIN);
+		assert.equal(env.byName('autoclose').callback.params.autoCloseTime, T0 + 2 * HOUR);
+		assert.equal(env.byName('dbchanged').state, 'waiting');
+		env.clock.set(T0 + 45 * MIN);
+		await env.world.fireDue();
+		assert.equal(env.world.launches[env.world.launches.length - 1].params.alarm[0].eventId, 'soon');
 	});
 });
