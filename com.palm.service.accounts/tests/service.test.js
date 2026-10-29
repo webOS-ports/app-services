@@ -309,3 +309,18 @@ test('B2: createAccount with a password: made only when every validator takes it
 		assert.deepStrictEqual(JSON.parse(s.keys.get(ok.result._id)), {common: {token: 'fake-t1'}, mail: {token: 'fake-t2'}});
 	});
 });
+
+test('B4: modifyAccount refused for an alwaysOn capability changes nothing, credentials included', async () => {
+	await withService({}, async s => {
+		const id = (await create(s)).result._id;
+		await new Promise(res => setTimeout(res, 1200));
+		await s.settle();
+		await s.tempdb.handle('put', {objects: [{_kind: 'com.palm.account.syncstate:1', accountId: id, syncState: 'ERROR'}]});
+		const before = s.keys.get(id);
+		const refused = await s.ask('modifyAccount', {accountId: id, object: {capabilityProviders: [{id: 'com.test.mail.imap'}],
+			credentials: {common: {password: 'fake-other'}}}}, APP);
+		assert.deepStrictEqual([refused.errorCode, refused.errorText], ['400_BAD_REQUEST', 'can\'t disable \'alwaysOn\' capabilities']);
+		assert.strictEqual(s.keys.get(id), before);
+		assert.deepStrictEqual(s.tempdb.all('com.palm.account.syncstate:1').map(x => x.syncState), ['ERROR']);
+	});
+});
