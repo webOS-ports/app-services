@@ -388,20 +388,7 @@ function createCommands({db, pc, keystore, templates, reloadTemplates, log = con
 		const newAccount = args.object;
 		const list = getTemplates();
 		log.log('ModifyCommandAssistant: id=' + args.accountId);
-
-		// New credentials: clear the account's sync states, so that credential dashboards go.
-		if (newAccount.credentials) {
-			try {
-				await pc.call(TEMPDB + 'del', '', {
-					query: {from: SYNCSTATE, where: [{prop: 'accountId', op: '=', val: args.accountId}]}
-				});
-			} catch (e) {
-				// The old next step read the record without looking at this: the read went out, and the
-				// command failed with this error all the same.
-				db.get([args.accountId]).catch(() => {});
-				throw e;
-			}
-		}
+		const newCredentials = newAccount.credentials;
 
 		const got = await db.get([args.accountId]);
 		const result = got.results;
@@ -410,12 +397,6 @@ function createCommands({db, pc, keystore, templates, reloadTemplates, log = con
 		const template = _.detect(list, t => t.templateId === account.templateId);
 		M.hasPermission('writePermissions', template, ctx, log);
 
-		const had = await keystore.has(account._id);
-		if (had.value && newAccount.credentials) {
-			await keystore.del(account._id);
-		}
-		await saveCredentials(account._id, newAccount.credentials);
-
 		let diff;
 		if (newAccount.capabilityProviders) {
 			diff = diffLists(_.pluck(account.capabilityProviders, 'id'), _.pluck(newAccount.capabilityProviders, 'id'));
@@ -423,7 +404,8 @@ function createCommands({db, pc, keystore, templates, reloadTemplates, log = con
 			diff = {add: [], remove: []};
 		}
 
-		// B4: refused only now, with the new credentials already stored.
+		// Refused before anything is changed. (The old code refused only after it had cleared the
+		// sync states and replaced the credentials: README, B4.)
 		if (template && diff.remove.length > 0) {
 			const reject = diff.remove.some(id => {
 				const match = _.detect(template.capabilityProviders, c => c.id === id);
@@ -435,6 +417,19 @@ function createCommands({db, pc, keystore, templates, reloadTemplates, log = con
 				throw e;
 			}
 		}
+
+		// New credentials: clear the account's sync states, so that credential dashboards go.
+		if (newCredentials) {
+			await pc.call(TEMPDB + 'del', '', {
+				query: {from: SYNCSTATE, where: [{prop: 'accountId', op: '=', val: args.accountId}]}
+			});
+		}
+
+		const had = await keystore.has(account._id);
+		if (had.value && newAccount.credentials) {
+			await keystore.del(account._id);
+		}
+		await saveCredentials(account._id, newAccount.credentials);
 
 		await db.merge([{
 			_id: args.accountId,
