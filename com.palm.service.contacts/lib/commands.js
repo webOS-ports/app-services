@@ -134,20 +134,6 @@ function batchWriter(db, log, {deep = false, size = 500} = {}) {
 	return {write, commit};
 }
 
-/*
-	The key a phone number is looked up by: the linker's search form
-	without its closing "-" ("-<the national number's digits after the
-	leading ones, reversed>"), which is a prefix of the normalizedValue the
-	linker stores for the same number and of none for a number that only
-	ends the same way. The rule of the linker's lookupKey (lib/rankers.js,
-	"similar mobile number"), on the same normalizePhoneNumber; null for a
-	value with no digits, which is not looked up (C12).
-*/
-function phoneLookupKey(model, value) {
-	const key = model.normalizePhoneNumber(value, true).slice(0, -1);
-	return /^-\d+$/.test(key) ? key : null;
-}
-
 function createCommands({db, call, persons, photos, prefs, model, G, P, log = console, timeoutsS = {},
 	photoDir = MEDIA_DIR}) {
 	const exporter = vcard.createExporter({model});
@@ -494,7 +480,8 @@ function createCommands({db, call, persons, photos, prefs, model, G, P, log = co
 		if (!parsed) {
 			return empty();
 		}
-		const key = phoneLookupKey(model, phoneNumber);
+		// The linker's lookup key (lib/model.js), a prefix of the form it stores for this number (C12).
+		const key = model.phoneLookupKey(phoneNumber);
 		if (!key) {
 			return empty();
 		}

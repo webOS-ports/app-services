@@ -115,12 +115,12 @@ test. The old service's bugs, by number:
   number that ends the same way is. `updatePersonLocaleAll` writes that
   other form (`-<subscriber number>---`, from the parsed number), so after
   it the linker's phone matches no longer line up with what it stored.
-  Both now use the linker's form (lib/model.js `normalizePhoneNumber`,
-  the linker's own copy): `findPersonByPhone` looks a number up as the
-  linker's "similar mobile number" ranker does (the search form without
-  its closing `-`, a prefix of what the linker stores for the same
-  number), and `updatePersonLocaleAll` writes what the linker writes, for
-  the new region.
+  Both now use the linker's form, from lib/model.js, the same file as the
+  linker's: `findPersonByPhone` looks a number up with `phoneLookupKey`,
+  the key the linker's "similar mobile number" ranker uses (the search
+  form without its closing `-`, a prefix of what the linker stores for the
+  same number), and `updatePersonLocaleAll` writes `normalizePhoneNumber`'s
+  form, as the linker writes it, for the new region.
 - C13: an organization's `location` was written as the framework's Address
   object, internals and all, and each save of the contact wrapped the
   stored one once more, one level deeper.
