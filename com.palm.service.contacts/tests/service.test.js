@@ -77,27 +77,37 @@ describe('com.palm.service.contacts', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
-	it('importVCard saves the cards to the default account, then answers "contacts.map is not a function"', async () => {
+	it('importVCard saves the cards to the default account and answers success (C1)', async () => {
 		const env = await boot();
 		const dir = tmpDir();
 		const file = path.join(dir, 'a.vcf');
 		fs.writeFileSync(file, 'BEGIN:VCARD\nN:Doe;John\nEND:VCARD\nBEGIN:VCARD\nN:Roe;Jane\nEND:VCARD\n');
 		await env.db.put([{_kind: 'com.palm.app.contacts.prefs:1', listSortOrder: 'LAST_FIRST', defaultAccountId: 'acct-g'}]);
-		const r = await env.ask('importVCard', {filePath: 'file://' + file});
-		assert.equal(r.errorText, 'MojoService: no errorCode supplied contacts.map is not a function');
+		assert.deepEqual(await env.ask('importVCard', {filePath: 'file://' + file}), {returnValue: true});
 		const saved = env.db.all('com.palm.contact:1');
 		assert.deepEqual(saved.map(c => [c._kind, c.accountId, c.name.familyName]),
 			[['com.palm.contact.google:1', 'acct-g', 'Doe'], ['com.palm.contact.google:1', 'acct-g', 'Roe']]);
 		env.stop();
 	});
 
-	it('importVCard to an account with no contacts kind answers NO_PROVIDER_FOR_CONTACTS and no errorText', async () => {
+	it('importVCard to an account with no contacts kind answers NO_PROVIDER_FOR_CONTACTS, with its text (C1)', async () => {
 		const env = await boot();
 		const dir = tmpDir();
 		fs.writeFileSync(path.join(dir, 'a.vcf'), 'BEGIN:VCARD\nN:Doe;John\nEND:VCARD\n');
 		await env.db.put([{_kind: 'com.palm.app.contacts.prefs:1', listSortOrder: 'LAST_FIRST', defaultAccountId: 'acct-n'}]);
-		assert.deepEqual(await env.ask('importVCard', {filePath: 'file://' + dir + '/a.vcf'}),
-			{errorCode: 'NO_PROVIDER_FOR_CONTACTS', exception: '[object Object]', returnValue: false});
+		const r = await env.ask('importVCard', {filePath: 'file://' + dir + '/a.vcf'});
+		assert.equal(r.errorCode, 'NO_PROVIDER_FOR_CONTACTS');
+		assert.equal(r.errorText, 'no provider for contacts could be retrieved for account: "acct-n"');
+		env.stop();
+	});
+
+	it('importVCard of a file that is not there fails, and saves nothing (C1)', async () => {
+		const env = await boot();
+		const dir = tmpDir();
+		await env.db.put([{_kind: 'com.palm.app.contacts.prefs:1', listSortOrder: 'LAST_FIRST', defaultAccountId: 'acct-g'}]);
+		const r = await env.ask('importVCard', {filePath: 'file://' + dir + '/missing.vcf'});
+		assert.match(r.errorText, /^MojoService: no errorCode supplied ENOENT: no such file or directory/);
+		assert.equal(env.db.all('com.palm.contact:1').length, 0);
 		env.stop();
 	});
 

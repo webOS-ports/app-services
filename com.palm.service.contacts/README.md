@@ -52,7 +52,7 @@ step's reply, db8 contents, files written and calls to other services were
 compared. The bugs are then mended one commit at a time, each with its own
 test. The old service's bugs, by number:
 
-- C1: `importVCard` answers `-9999 "contacts.map is not a function"` for
+- C1 (mended): `importVCard` answers `-9999 "contacts.map is not a function"` for
   every import that finishes, after it has saved every card: the service
   mapped over the importer's result, which is `true`. A missing file, or a
   first card that cannot be read, answers the same, having saved nothing.

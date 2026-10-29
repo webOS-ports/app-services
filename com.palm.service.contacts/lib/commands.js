@@ -169,9 +169,10 @@ function createCommands({db, call, persons, photos, prefs, model, G, log = conso
 
 	/*
 		VCardImporter.importVCard: the cards saved, as new contacts of the
-		kind the default account's contacts provider has. Then the service
-		did contacts.map on the importer's result, true, which failed: every
-		import that finishes answers that error (README.md).
+		kind the default account's contacts provider has. -> {} once they
+		are; a file that cannot be read fails with its error. (The old
+		service mapped over the importer's result, true, and failed every
+		import, and lost the importer's own errors: README.md, C1.)
 	*/
 	async function importVCard(params) {
 		requireString(params.filePath, 'importVCard did not specify a filePath for the vcard to import');
@@ -202,27 +203,21 @@ function createCommands({db, call, persons, photos, prefs, model, G, log = conso
 			return never();
 		}
 		if (!kind) {
-			// future.exception set to a plain object: mojoservice answered with its errorCode only.
-			const e = {errorCode: 'NO_PROVIDER_FOR_CONTACTS',
-				errorText: 'no provider for contacts could be retrieved for account: "' + accountId + '"'};
+			const e = new Error('no provider for contacts could be retrieved for account: "' + accountId + '"');
+			e.errorCode = 'NO_PROVIDER_FOR_CONTACTS';
 			throw e;
 		}
-		try {
-			await vcard.importCards(path, async c => {
-				c.kind = kind;
-				c.accountId = accountId;
-				// A card ended twice is the contact saved twice: the second time it has its _id, and is merged.
-				if (c.id) {
-					await saveContactAgain(vcard.record(c));
-				} else {
-					c.id = await saveNewContact(vcard.record(c));
-				}
-			});
-		} catch (e) {
-			// The first card failing (or no file) failed the importer's own chain, which nothing read.
-			log.error(SERVICE + ': importVCard: ' + ((e && e.message) || e));
-		}
-		throw new TypeError('contacts.map is not a function');
+		await vcard.importCards(path, async c => {
+			c.kind = kind;
+			c.accountId = accountId;
+			// A card ended twice is the contact saved twice: the second time it has its _id, and is merged.
+			if (c.id) {
+				await saveContactAgain(vcard.record(c));
+			} else {
+				c.id = await saveNewContact(vcard.record(c));
+			}
+		}, {openError: true});
+		return {};
 	}
 
 	// Contact.save for a new contact: the SIM service saves a SIM contact; any other is put. -> its _id (none for SIM)

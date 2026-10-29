@@ -395,11 +395,14 @@ function never() {
 	it is a later one, or if a save fails (then the command answers when
 	it times out).
 */
-async function importCards(path, save) {
+async function importCards(path, save, {openError = false} = {}) {
 	let file;
 	try {
 		file = reader(path);
 	} catch (e) {
+		if (openError) {
+			throw e;
+		}
 		// The importer's failure to open the file went nowhere; it then read from no reader at all.
 		throw new TypeError('Cannot read properties of null (reading \'readLine\')');
 	}
