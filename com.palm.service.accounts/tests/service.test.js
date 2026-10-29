@@ -324,3 +324,16 @@ test('B4: modifyAccount refused for an alwaysOn capability changes nothing, cred
 		assert.deepStrictEqual(s.tempdb.all('com.palm.account.syncstate:1').map(x => x.syncState), ['ERROR']);
 	});
 });
+
+test('B5: new credentials: onCredentialsChanged to the template and the providers kept, not to those just enabled', async () => {
+	await withService({}, async s => {
+		const id = (await create(s, {capabilityProviders: [{id: 'com.test.mail.always'}]})).result._id;
+		await new Promise(res => setTimeout(res, 1200));
+		await s.settle();
+		s.calls.splice(0);
+		const r = await s.ask('modifyAccount', {accountId: id, object: {capabilityProviders: [{id: 'com.test.mail.always'}, {id: 'com.test.mail.imap'}],
+			credentials: {common: {password: 'fake-new'}}}}, APP);
+		assert.deepStrictEqual(r, {returnValue: true});
+		assert.deepStrictEqual(s.callsTo('com.test.mail/').map(c => c.method).sort(), ['onCapabilitiesChanged', 'onCredentialsChanged', 'onEnabled']);
+	});
+});
