@@ -49,7 +49,7 @@ function tmpDir() {
 	return fs.mkdtempSync(path.join(process.env.CONTACTS_TEST_TMP || os.tmpdir(), 'contacts-test-'));
 }
 
-async function boot({profileAccounts = ['acct-p'], timeoutsS, cacheDir = '/var/file-cache'} = {}) {
+async function boot({profileAccounts = ['acct-p'], timeoutsS, cacheDir = '/var/file-cache', photoDir} = {}) {
 	const db = createFakeDb({prefix: 'C'});
 	const calls = [];
 	let pending = 0, last = Date.now();
@@ -94,7 +94,7 @@ async function boot({profileAccounts = ['acct-p'], timeoutsS, cacheDir = '/var/f
 	const pb = createPalmbus(onCall);
 	const {start} = require(path.join(SERVICE, 'service'));
 	const service = await start({palmbus: pb, idleMs: 0, log: quiet, frameworksRoot: FRAMEWORKS, exit() {},
-		now: () => 1700000000000, timeoutsS});
+		now: () => 1700000000000, timeoutsS, photoDir});
 
 	async function settle(ms = 30) {
 		for (;;) {
