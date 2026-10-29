@@ -311,12 +311,14 @@ describe('com.palm.service.contacts', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
-	it('findPersonByPhone with returnAllMatches lists the worst match first', async () => {
+	it('findPersonByPhone with returnAllMatches lists the best match first (C8)', async () => {
 		const env = await boot();
-		await env.db.put([person('pa', {phoneNumbers: [{value: '(408) 555-1234', normalizedValue: '-4321555---'}]}),
-			person('pb', {phoneNumbers: [{value: '555-1234', normalizedValue: '-4321555---'}]})]);
+		await env.db.put([person('pb', {phoneNumbers: [{value: '555-1234', normalizedValue: '-4321555---'}]}),
+			person('pa', {phoneNumbers: [{value: '(408) 555-1234', normalizedValue: '-4321555---'}]}),
+			person('pc', {phoneNumbers: [{value: '555-1234', normalizedValue: '-4321555---'}]})]);
 		const r = await env.ask('findPersonByPhone', {phoneNumber: '4085551234', params: {returnAllMatches: true}});
-		assert.deepEqual(r.map(p => p._id), ['pb', 'pa']);
+		// Equal matches keep the order db8 gave them.
+		assert.deepEqual(r.map(p => p._id), ['pa', 'pb', 'pc']);
 		env.stop();
 	});
 

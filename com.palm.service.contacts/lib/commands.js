@@ -495,7 +495,8 @@ function createCommands({db, call, persons, photos, prefs, model, G, log = conso
 		if (matches.length === 0) {
 			return empty();
 		}
-		matches.sort((a, b) => a.quality - b.quality);
+		// The best match (comparePhoneNumbers: 100 the strongest) first; the old order was the reverse (C8).
+		matches.sort((a, b) => b.quality - a.quality);
 		return matches.map(m => m.match);
 	}
 

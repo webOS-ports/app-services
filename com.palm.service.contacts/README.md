@@ -86,8 +86,8 @@ test. The old service's bugs, by number:
 - C7 (mended): the vCard URL labels are off by one: a work URL is
   labelled `HOME`, a home URL `TYPE=` with no label. A work URL is now
   `WORK`, a home one `HOME`, and one with no label is written `URL:`.
-- C8: `findPersonByPhone` with `returnAllMatches` lists the worst match
-  first.
+- C8 (mended): `findPersonByPhone` with `returnAllMatches` lists the
+  worst match first. It now lists the best first.
 - C9: `sortOrderChanged` reads the persons without their `sortKey`, so it
   rewrites every person's sort key every time; called by hand (no
   `$activity`) it writes them and then fails with a `TypeError` on the
