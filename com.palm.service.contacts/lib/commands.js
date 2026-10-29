@@ -622,7 +622,8 @@ function createCommands({db, call, persons, photos, prefs, model, G, log = conso
 		const order = p.get(PREF.listSortOrder);
 		const prefsId = p.get('_id');
 		if (!params.isFirstRun) {
-			const query = {select: ['_id', 'name', 'organization'], from: PERSON_KIND, limit: 500};
+			// With its sortKey, so that a key already right is not written again (C9: it was left out).
+			const query = {select: ['_id', 'name', 'organization', 'sortKey'], from: PERSON_KIND, limit: 500};
 			for (;;) {
 				const page = await db.findPage(Object.assign({}, query));
 				// Utils.dbMap: each person of the page; the first that failed fails the run, after the others.
@@ -644,9 +645,11 @@ function createCommands({db, call, persons, photos, prefs, model, G, log = conso
 			}
 		}
 		writer.commit();
-		// A run with no $activity (by hand) fails here, after the sort keys are written.
-		const activityId = activity.activityId;
-		await call(AM + '/complete', {activityId, restart: true, callback: CALLBACK,
+		// A run with no $activity (by hand) has no watch to restart (C9: it failed here, keys written).
+		if (!activity) {
+			return true;
+		}
+		await call(AM + '/complete', {activityId: activity.activityId, restart: true, callback: CALLBACK,
 			trigger: watchTrigger([{prop: '_id', op: '=', val: prefsId}, {prop: PREF.listSortOrder, op: '!=', val: order}])});
 		return true;
 	}
