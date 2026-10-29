@@ -59,8 +59,6 @@ them by these numbers):
 - Q7.9: `getManualLinks` / `getUnlinkLinks` over the bus never work: with
   an id they do not answer until the command times out (504), and with a
   contact object they want the framework's contact.
-- Q7.12: the contacts are read without paging, so `forceAutolink` handles
-  only the first 500.
 - Q7.14: the phone lookups share one `where` clause, so every one of them
   asks for the contact's last mobile number.
 - Q7.15: a mobile number is looked up by a key (Globalization's subscriber

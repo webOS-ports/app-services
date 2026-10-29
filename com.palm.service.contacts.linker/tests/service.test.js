@@ -202,6 +202,20 @@ describe('the linker', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
+	it('forceAutolink links every contact, not only the first page of 500', async () => {
+		const env = await boot();
+		const list = [name('Ann', 'Lee')];
+		for (let i = 0; i < 598; i++) {
+			list.push({note: 'n' + i});
+		}
+		list.push(name('Ann', 'Lee'));
+		const put = await env.putContacts(list);
+		assert.equal(await env.ask('forceAutolink'), true);
+		assert.equal(env.persons().length, 599);
+		assert.deepEqual(env.personOf(put[599]._id).contactIds.slice().sort(), [put[0]._id, put[599]._id].sort());
+		env.stop();
+	});
+
 	it('takes a deleted contact out of its person, and deletes a person left with none', async () => {
 		const env = await boot();
 		const [a, b] = await env.putContacts([name('Ann', 'Lee'), name('Ann', 'Lee')]);

@@ -9,11 +9,11 @@
 	own; a deleted contact leaves its person, and a person left with no
 	contact goes.
 
-	A run takes one page of contacts (at most 500): every contact for
-	forceAutolink, those with a _rev above the watch's for the watch, in _rev
-	order. It remembers the highest _rev it reached, which the watch is armed
-	with again after the run (watch.js). One run at a time; a run whose job
-	is asked to yield stops before its next contact.
+	forceAutolink takes every contact, a page (500) at a time. The watch
+	takes one page of those with a _rev above its own, in _rev order, and is
+	called back for the rest. A run remembers the highest _rev it reached,
+	which the watch is armed with again after the run (watch.js). One run at
+	a time; a run whose job is asked to yield stops before its next contact.
 
 	As the old service did: a contact whose handling fails is skipped, except
 	the last one of the run, whose failure fails the run (and leaves the
@@ -246,23 +246,31 @@ function createAutolinker({db, persons, rankers, log = console}) {
 		const listSortOrder = await persons.listSortOrder();
 		const query = {from: CONTACT_KIND, incDel: true};
 		query.where = startRev ? [{prop: '_rev', op: '>', val: startRev}] : undefined;
-		const contacts = (await db.findPage(query)).results;
 		const state = {highestRev: startRev, processed: 0, yielding: false};
-		let failure = null;
-		for (let i = 0; i < contacts.length; i++) {
-			// What failed before is dropped once the next contact comes up.
-			failure = null;
-			if (toYield[jobId]) {
-				finish(state, controller, i - 1 >= 0 ? contacts[i - 1] : undefined);
-				state.yielding = true;
+		let failure = null, page = await db.findPage(query), previous;
+		for (;;) {
+			const contacts = page.results;
+			for (let i = 0; i < contacts.length && !state.yielding; i++) {
+				// What failed before is dropped once the next contact comes up.
+				failure = null;
+				if (toYield[jobId]) {
+					finish(state, controller, i - 1 >= 0 ? contacts[i - 1] : previous);
+					state.yielding = true;
+					break;
+				}
+				try {
+					await processContact(contacts[i], state, listSortOrder);
+				} catch (e) {
+					log.error('linker: contact ' + contacts[i]._id + ' failed: ' + ((e && e.stack) || e));
+					failure = e;
+				}
+			}
+			// The watch is called back for what is left; forceAutolink goes on to the next page.
+			if (state.yielding || startRev || !page.next || !contacts.length) {
 				break;
 			}
-			try {
-				await processContact(contacts[i], state, listSortOrder);
-			} catch (e) {
-				log.error('linker: contact ' + contacts[i]._id + ' failed: ' + ((e && e.stack) || e));
-				failure = e;
-			}
+			previous = contacts[contacts.length - 1];
+			page = await db.findPage(Object.assign({}, query, {page: page.next}));
 		}
 		if (failure) {
 			throw failure;
