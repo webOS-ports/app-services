@@ -60,8 +60,8 @@ const LABELS = {
 		['type_pager', ['PAGER']], ['type_personal_fax', ['HOME', 'FAX']], ['type_work_fax', ['WORK', 'FAX']],
 		['type_other', ['OTHER']]],
 	EMAIL: [['type_home', ['HOME', 'INTERNET']], ['type_work', ['WORK', 'INTERNET']], ['type_other', ['INTERNET']]],
-	// The framework's table gives "HOME" the work type, so a work URL is labelled HOME and a home one has none.
-	URL: [['type_work', ['HOME']], ['type_work', ['WORK']], ['type_other', []]],
+	// The framework's table gave "HOME" the work type, so a work URL was labelled HOME and a home one had none (C7).
+	URL: [['type_home', ['HOME']], ['type_work', ['WORK']], ['type_other', []]],
 	ADDRESS: [['type_home', ['HOME']], ['type_work', ['WORK']], ['type_other', ['OTHER']]]
 };
 
@@ -599,7 +599,9 @@ function createExporter({model}) {
 			}
 			for (const u of p.urls) {
 				if (!bad(u.value)) {
-					out.push('URL;' + typeLabel(labelsFor(LABELS.URL, u.type), v21) + ':' + escapeString(u.value) + '\r');
+					// No label, no TYPE= (C7: "URL;TYPE=:").
+					const labels = labelsFor(LABELS.URL, u.type);
+					out.push('URL' + (labels.length ? ';' + typeLabel(labels, v21) : '') + ':' + escapeString(u.value) + '\r');
 				}
 			}
 			for (const i of p.ims) {
