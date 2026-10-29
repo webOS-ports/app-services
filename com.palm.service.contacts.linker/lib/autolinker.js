@@ -148,13 +148,13 @@ function createAutolinker({db, persons, rankers, log = console}) {
 		await persons.save(person);
 	}
 
-	async function refresh(person, contacts) {
-		await persons.fixup(person, {contacts});
+	async function refresh(person, contacts, listSortOrder) {
+		await persons.fixup(person, {contacts, listSortOrder});
 		await persons.save(person);
 	}
 
 	// Autolinker.autolinkThesePeople: the person with most contacts takes in the others.
-	async function link(person, others, contact) {
+	async function link(person, others, contact, listSortOrder) {
 		let most = 0, mostAt = 0, personInOthers = false;
 		others.forEach((p, i) => {
 			if (most <= p.rec.contactIds.length) {
@@ -184,7 +184,7 @@ function createAutolinker({db, persons, rankers, log = console}) {
 		if (others.length) {
 			await db.del(others.map(p => p.rec._id));
 		}
-		await persons.fixup(keeper, {others});
+		await persons.fixup(keeper, {others, listSortOrder});
 		await persons.save(keeper);
 	}
 
@@ -199,10 +199,10 @@ function createAutolinker({db, persons, rankers, log = console}) {
 			}
 		}
 		if (others.length) {
-			return link(person, others, contact);
+			return link(person, others, contact, listSortOrder);
 		}
 		if (person) {
-			return refresh(person, contacts);
+			return refresh(person, contacts, listSortOrder);
 		}
 		return newPersonFor(contact, listSortOrder);
 	}
