@@ -1,21 +1,30 @@
 # Copyright and License Information
 
-All content, including all source code files and documentation files in this repository except otherwise noted are: 
+This service is a rewrite, for Node 22, of the contacts service that ran
+on mojoservice:
 
- Copyright (c) 2010-2013 LG Electronics, Inc.
+ Copyright (c) 2026 Herman van Hazendonk
 
-All content, including all source code files and documentation files in this repository except otherwise noted are:
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this content except in compliance with the License.
-You may obtain a copy of the License at
+It is licensed under the GNU General Public License, version 3 or (at your
+option) any later version: see COPYING. The rest of the app-services
+repository keeps its own licence.
 
-http://www.apache.org/licenses/LICENSE-2.0
+The rewrite follows the old service and the contacts framework closely,
+and the files ported from them (lib/commands.js, linkhash.js, model.js,
+person.js, photos.js, prefs.js, records.js and vcard.js) say so in their
+headers, as do lib/mojo.js and lib/db.js for mojoservice and Foundations.
+That code is:
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+ Copyright (c) 2009-2013 LG Electronics, Inc.
+ Copyright (c) 2009-2012 Hewlett-Packard Development Company, L.P.
+
+licensed under the Apache License, Version 2.0 (see LICENSE), which allows
+it to be part of a GPL-3.0 work. lib/bus.js and lib/errors.js come from
+luneos-synergy-connectors, which is GPL-3.0-or-later. The files kept from
+the old service as they were (activities/, backup/, db/, desktop-support/
+and files/), and the contacts linker's kinds copied into tests/kinds/ for
+the tests, are LG Electronics' and stay under the Apache License, Version
+2.0.
 
 Quick Info
 -----------

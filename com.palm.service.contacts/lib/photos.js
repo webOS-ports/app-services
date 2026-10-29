@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Herman van Hazendonk
-// SPDX-License-Identifier: Apache-2.0
+// Derived from the contacts framework's Contact.js and
+// properties/ContactPhoto.js, Copyright (c) 2009-2013 LG Electronics, Inc.,
+// licensed under the Apache License, Version 2.0.
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 'use strict';
 
