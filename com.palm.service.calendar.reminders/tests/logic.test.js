@@ -117,6 +117,13 @@ describe('calendar: findNextOccurrence', () => {
 		assert.equal(em.findNextOccurrence(e, Date.UTC(2026, 10, 9, 12, 0)), Date.UTC(2026, 10, 22, 8, 0));
 	});
 
+	it('bug 5: an exception date of another length does not end the check of the others', async () => {
+		const e = ev({dtstart: Date.UTC(2026, 10, 8, 8, 0), dtend: Date.UTC(2026, 10, 8, 9, 0), rrule: {freq: 'WEEKLY'},
+			exdates: ['2026-11-15', '20261115T090000']});
+		await em.findNextOccurrenceTimezonePrep([e]);
+		assert.equal(em.findNextOccurrence(e, Date.UTC(2026, 10, 9, 12, 0)), Date.UTC(2026, 10, 22, 8, 0));
+	});
+
 	it('old bug 13: an exdate of a daily event skips the day after it as well', async () => {
 		const e = ev({dtstart: Date.UTC(2026, 9, 22, 7, 0), dtend: Date.UTC(2026, 9, 22, 8, 0), rrule: {freq: 'DAILY'},
 			exdates: ['20261024T090000']});

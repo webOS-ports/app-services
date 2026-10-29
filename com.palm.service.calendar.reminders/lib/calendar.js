@@ -337,7 +337,8 @@ function evaluateExceptions(date, exdates, eventStart) {
 				break;
 			}
 			default:
-				return false;
+				// Bug 5: a date of another length is not one; the framework stopped checking the others here.
+				continue;
 			}
 			if (exdate === null) {
 				throw new TypeError('Cannot read properties of null (reading \'equals\')');
