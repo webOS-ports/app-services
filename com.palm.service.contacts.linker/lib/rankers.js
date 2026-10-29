@@ -125,27 +125,30 @@ function createRankers({db, persons, model, G, clb, linkHash}) {
 		}
 	}
 
-	// Autolinker.getPrefixNumberMapping: the numbers of both sides by their search form.
-	function byPrefix(linked, candidate) {
-		const out = {};
-		const put = (list, side) => {
-			for (const n of list) {
-				if (!n) {
-					continue;
-				}
-				const key = model.normalizePhoneNumber(n.value, true);
-				if (!key) {
-					continue;
-				}
-				if (!out[key]) {
-					out[key] = {current: [], potential: []};
-				}
-				out[key][side].push(n);
+	/*
+		Autolinker.getPrefixNumberMapping: numbers by their search form. Only
+		the distinct values under each form count (a match compares values),
+		in the order they first came, and the forms in the order they first
+		came.
+	*/
+	function byPrefix(list, into = new Map()) {
+		for (const n of list) {
+			if (!n) {
+				continue;
 			}
-		};
-		put(linked, 'current');
-		put(candidate, 'potential');
-		return out;
+			const key = model.normalizePhoneNumber(n.value, true);
+			if (!key) {
+				continue;
+			}
+			if (!into.has(key)) {
+				into.set(key, new Map());
+			}
+			const values = into.get(key);
+			if (!values.has(String(n.value))) {
+				values.set(String(n.value), n.value);
+			}
+		}
+		return into;
 	}
 
 	/*
@@ -194,27 +197,46 @@ function createRankers({db, persons, model, G, clb, linkHash}) {
 			}
 			return parsed[v];
 		};
-		let linked = numbers.map(n => (n.type === MOBILE ? n : undefined));
+		/*
+			A person found is like the contact when, under some search form both
+			have, each of their mobile numbers compares as the same as each of
+			the numbers linked so far: the contact's and its person's, then those
+			of each person found like it. The forms are tried in the order the
+			linked numbers gave them, as the old code did; the linked numbers are
+			keyed once, not again for each person found, and each pair of values
+			is compared once.
+		*/
+		let linked = null;
+		const compared = new Map();
+		const same = (a, b) => {
+			const k = String(a) + '\u0000' + String(b);
+			if (!compared.has(k)) {
+				compared.set(k, G.Phone.comparePhoneNumbers(parse(a), parse(b)) > 0);
+			}
+			return compared.get(k);
+		};
 		for (const p of results) {
 			const theirs = p.rec.phoneNumbers.map(n => (n.type === MOBILE ? n : undefined));
 			if (theirs.length < 1) {
 				continue;
 			}
-			const mapping = byPrefix(linked, theirs);
-			Object.keys(mapping).some(key => {
-				const {current, potential} = mapping[key];
-				if (!current.length || !potential.length) {
-					return false;
+			if (!linked) {
+				linked = byPrefix(numbers.map(n => (n.type === MOBILE ? n : undefined)));
+			}
+			const potential = byPrefix(theirs);
+			for (const [key, current] of linked) {
+				const their = potential.get(key);
+				if (!their) {
+					continue;
 				}
-				const same = (c, q) => G.Phone.comparePhoneNumbers(parse(c.value), parse(q.value)) > 0;
-				const mismatch = current.some(c => potential.some(q => !same(c, q)));
-				if (mismatch) {
-					return false;
+				const values = [...their.values()];
+				const mismatch = [...current.values()].some(c => values.some(q => !same(c, q)));
+				if (!mismatch) {
+					add(weights, SIMILAR.mobile, p, true);
+					byPrefix(theirs, linked);
+					break;
 				}
-				add(weights, SIMILAR.mobile, p, true);
-				linked = linked.concat(theirs);
-				return true;
-			});
+			}
 		}
 	}
 

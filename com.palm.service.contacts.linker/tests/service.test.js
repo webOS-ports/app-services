@@ -448,6 +448,27 @@ describe('saveNewPersonAndContacts', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
+	it('links by mobile number through the numbers of each person linked before, value by value', async () => {
+		// Ann has the contact's number and one more; Bob's number like the contact's is a UK one, which
+		// does not compare as the same, but he has Ann's other number. Dee has both forms of the number.
+		const env = await boot();
+		const mobile = (value, normalizedValue) => ({value, type: 'type_mobile', normalizedValue});
+		const us = mobile('4085551234', '-4321555804--1-+'), uk = mobile('+44 408 555 1234', '-4321555804--44-+');
+		const other = mobile('6505550000', '-0000555056--1-+');
+		const people = [['Ann', 'Lee', [us, other]], ['Bob', 'Ray', [uk, other]],
+			['Dee', 'Fox', [mobile('+1 408 555 1234', '-4321555804--1-+'), uk]]];
+		const contacts = await env.putContacts(people.map(([given, family, phoneNumbers]) =>
+			Object.assign(name(given, family), {phoneNumbers: phoneNumbers.map(n => ({value: n.value, type: n.type}))})));
+		await env.db.put(people.map(([givenName, familyName, phoneNumbers], i) => ({_kind: 'com.palm.person:1',
+			contactIds: [contacts[i]._id], names: [{givenName, familyName}], name: {givenName, familyName}, phoneNumbers})));
+		const [c] = await env.putContacts([Object.assign(name('Cy', 'Day'), {phoneNumbers: [{value: '4085551234', type: 'type_mobile'}]})]);
+		const r = await env.ask('dbUpdatedRelinkChanges', {revChangedStart: env.db.records.get(c._id)._rev - 1});
+		assert.equal(r, true);
+		assert.deepEqual(env.personOf(c._id).contactIds.slice().sort(), [contacts[0]._id, contacts[1]._id, c._id].sort());
+		assert.deepEqual(env.personOf(contacts[2]._id).contactIds, [contacts[2]._id]);
+		env.stop();
+	});
+
 	it('writes the backup of a speed dial a person has, and drops one that is no longer on a number', async () => {
 		const env = await boot();
 		const [a, b] = await env.putContacts([
