@@ -181,6 +181,26 @@ function createModel({G, P, phoneRegion = 'us'}) {
 		throw new Error('PhoneNumber.normalizePhoneNumber - number passed is not a string or an object');
 	}
 
+	/*
+		The key a phone number is looked up by, here (rankers.js, "similar
+		mobile number") and in the contacts service's findPersonByPhone: the
+		search form without its closing "-", "-<the number's digits,
+		reversed>", which finds the persons with a number whose normalised
+		value starts with it, as the phone app looks up a caller. 408-555-1234
+		is stored as "-4321555804--1-+" and looked up as "-4321555804". The
+		old service looked it up by Globalization's subscriber number,
+		"-4321555-", which is not a prefix of what phonenumberlib stores, so
+		10-digit US numbers and NL mobile numbers never found anyone (README:
+		Q7.15). null for a value with no digits, which is not looked up.
+	*/
+	function phoneLookupKey(value) {
+		if (typeof value !== 'string') {
+			return null;
+		}
+		const key = normalizePhoneNumber(value, true).slice(0, -1);
+		return /^-\d+$/.test(key) ? key : null;
+	}
+
 	function normalizeParsed(parsed, value, wantSearchFormat) {
 		let n = '';
 		if (!parsed) {
@@ -351,8 +371,8 @@ function createModel({G, P, phoneRegion = 'us'}) {
 		return key.toLocaleLowerCase().trim();
 	}
 
-	return {fullName, normalizePhoneNumber, formatPhoneNumber, keys, dedupe, bestOrganization, searchTerms,
-		emailEntry, phoneEntry, imEntry, displayName, sortKey};
+	return {fullName, normalizePhoneNumber, phoneLookupKey, formatPhoneNumber, keys, dedupe, bestOrganization,
+		searchTerms, emailEntry, phoneEntry, imEntry, displayName, sortKey};
 }
 
 module.exports = {createModel, DEFAULTS, NAME_FIELDS, withDefaults, entries, single, contactName, organization,

@@ -274,4 +274,13 @@ describe('normalised phone numbers', () => {
 		assert.equal(model.normalizePhoneNumber({subscriberNumber: '123'}, true), '-321-');
 		assert.throws(() => model.normalizePhoneNumber(5), /number passed is not a string or an object/);
 	});
+
+	it('the lookup key is a prefix of the stored form, and of none that only ends the same way', () => {
+		const model = createModel({G: {}, P: parser()});
+		assert.equal(model.phoneLookupKey('408-555-1234'), '-4321555804');
+		assert.ok(model.normalizePhoneNumber('408-555-1234').startsWith(model.phoneLookupKey('408-555-1234')));
+		assert.ok(!model.normalizePhoneNumber('555 1234').startsWith(model.phoneLookupKey('408-555-1234')));
+		assert.equal(model.phoneLookupKey('abc'), null);
+		assert.equal(model.phoneLookupKey({subscriberNumber: '123'}), null);
+	});
 });

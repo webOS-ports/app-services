@@ -154,26 +154,6 @@ function createRankers({db, persons, model, G, clb, linkHash}) {
 		return into;
 	}
 
-	/*
-		The persons a mobile number is looked up in: those with a number whose
-		normalised value starts with this one's digits, as the phone app looks
-		up a caller: "-<the number's digits, reversed>", the search form
-		without its closing "-". 408-555-1234 is stored as "-4321555804--1-+"
-		and looked up as "-4321555804". The old service looked it up by
-		Globalization's subscriber number, "-4321555-", which is not a prefix
-		of what phonenumberlib stores, so 10-digit US numbers and NL mobile
-		numbers never found anyone (README: Q7.15); and its queries shared one
-		condition, so each asked for the last mobile number (Q7.14). A value
-		with no digits is not looked up.
-	*/
-	function lookupKey(value) {
-		if (typeof value !== 'string') {
-			return null;
-		}
-		const key = model.normalizePhoneNumber(value, true).slice(0, -1);
-		return /^-\d+$/.test(key) ? key : null;
-	}
-
 	async function similarPhoneNumber(person, contact, weights) {
 		const parsed = {};
 		const numbers = (person ? person.rec.phoneNumbers : []).concat(entries(contact, 'phoneNumbers', DEFAULTS.phone));
@@ -183,7 +163,7 @@ function createRankers({db, persons, model, G, clb, linkHash}) {
 				continue;
 			}
 			const p = G.Phone.parsePhoneNumber(n.value);
-			const key = p ? lookupKey(n.value) : null;
+			const key = p ? model.phoneLookupKey(n.value) : null;
 			if (key) {
 				queries.push({method: 'find', params: {query: {from: KIND,
 					where: [{prop: 'phoneNumbers.normalizedValue', op: '%', val: key}]}}});
