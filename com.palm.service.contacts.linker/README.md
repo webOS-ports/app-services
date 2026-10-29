@@ -68,14 +68,15 @@ These things deliberately differ from the old service:
 
 - The old service wrote the framework's own Address object, internals and
   all, as an organization's location; this writes the address.
-- The four similarity rankers (name, phone, email, IM) run one after the
-  other, in that order. The old service ran them at the same time, so the
-  order in which their persons came in depended on which db8 reply came
-  back first. That order breaks ties: which person keeps its record, and
-  the order of a merged person's `contactIds`. On the VM, two runs of the
-  old service over the same 200 contacts once ended with 141 and 142
-  persons. The order used here is the one replies take when they come
-  back in the order they were asked for.
+- The four similarity rankers (name, phone, email, IM) run at the same
+  time, as in the old service, but each adds up weights of its own, and
+  those are put together in that order. The old service let them add to
+  the same weights, so the order in which their persons came in depended
+  on which db8 reply came back first. That order breaks ties: which person
+  keeps its record, and the order of a merged person's `contactIds`. On
+  the VM, two runs of the old service over the same 200 contacts once
+  ended with 141 and 142 persons. The order used here is the one replies
+  take when they come back in the order they were asked for.
 - When `linkerWatch` cannot be completed, it is created again from the
   revision the run reached.
 - activitymanager's callbacks adopt the activity with `wait: true`. A run

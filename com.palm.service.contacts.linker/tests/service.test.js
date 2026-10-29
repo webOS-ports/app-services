@@ -319,6 +319,16 @@ describe('the linker', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
+	it('runs the four similarity rankers at once, so that their db8 reads overlap', async () => {
+		const env = await boot();
+		await env.putContacts([Object.assign(name('Ann', 'Lee'), {emails: [{value: 'a@b.c', type: 'type_home'}],
+			ims: [{value: 'ann', type: 'type_aim'}], phoneNumbers: [{value: '5551234', type: 'type_mobile'}]})]);
+		env.resetDbMost();
+		await env.ask('forceAutolink');
+		assert.ok(env.dbMost >= 4, 'at most ' + env.dbMost + ' db8 calls at once');
+		env.stop();
+	});
+
 	it('forceAutolink links every contact, not only the first page of 500', async () => {
 		const env = await boot();
 		const list = [name('Ann', 'Lee')];
