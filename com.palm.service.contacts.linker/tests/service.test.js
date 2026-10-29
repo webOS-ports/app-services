@@ -298,6 +298,27 @@ describe('the linker', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
+	it('finds similar persons by _id alone, and reads each found person once', async () => {
+		// A large person with many names came back whole for every name query that found it, and a
+		// 24 MB reply was more than luna-service takes.
+		const env = await boot();
+		await env.putContacts([name('Ann', 'Lee'), name('Ann', 'Lee'), name('Ann', 'Lee')]);
+		env.calls.length = 0;
+		await env.ask('forceAutolink');
+		const finds = env.calls.filter(c => c.method === 'batch').flatMap(c => c.args.operations)
+			.filter(o => o.params.query.from === 'com.palm.person:1');
+		assert.ok(finds.length > 0);
+		for (const o of finds) {
+			assert.deepEqual(o.params.query.select, ['_id']);
+		}
+		const gets = env.calls.filter(c => c.method === 'get');
+		for (const g of gets) {
+			assert.equal(new Set(g.args.ids).size, g.args.ids.length);
+		}
+		assert.equal(env.persons().length, 1);
+		env.stop();
+	});
+
 	it('forceAutolink links every contact, not only the first page of 500', async () => {
 		const env = await boot();
 		const list = [name('Ann', 'Lee')];
