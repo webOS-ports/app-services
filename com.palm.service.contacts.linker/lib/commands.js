@@ -17,20 +17,28 @@
 	                         person if it has no contacts
 	resetCLBDB, performedManualLink {person1Contacts, person2Contacts}
 
-	Broken in the old service and broken the same way here, until the
-	commits that mend them: setupWatch (calls a function that is not
-	there), performedUnlink (wants the framework's person object), and
-	getManualLinks / getUnlinkLinks (an id never answers until the command
-	times out; a contact object wants the framework's contact).
+	setupWatch               creates linkerWatch again, from the revision in
+	                         com.palm.linker.rev:1 (0 when there is none)
+	performedUnlink          {person, contactId}: the clb records for a
+	                         contact taken out of person by hand
+	getManualLinks, getUnlinkLinks {contactOrContactId} -> {results}
+
+	The old service never answered those four: setupWatch called a function
+	that had been renamed (README: Q7.4), performedUnlink wanted the
+	framework's person object (Q7.8), and getManualLinks / getUnlinkLinks
+	with an id never answered until the command timed out, and with a
+	contact object wanted the framework's contact (Q7.9).
 
 	The plugin hook (/etc/palm/contact_linker_plugins) is gone: no plugin
 	was ever installed on LuneOS.
 */
 
 const mojo = require('./mojo');
-const {rearm, watchRevision} = require('./watch');
+const {rearm, watchRevision, activitySpec} = require('./watch');
 
 const SERVICE = 'com.palm.service.contacts.linker';
+const REV_KIND = 'com.palm.linker.rev:1';
+const AM = 'luna://com.palm.activitymanager';
 const LONG_TIMEOUT_S = 3600;
 const NAMES = ['manualLink', 'manualUnlink', 'saveNewPersonAndContacts', 'forceAutolink', 'dbUpdatedRelinkChanges',
 	'yieldAutolink', 'setupWatch', 'deleteOrphanedPerson', 'resetCLBDB', 'performedManualLink', 'performedUnlink',
@@ -131,18 +139,30 @@ function createCommands({db, call, persons, autolinker, clb, saveNew, log = cons
 		}
 	}
 
-	// ContactLinkBackup.getManualLinks / getUnlinkLinks, from the bus.
-	function clbLookup() {
-		return params => {
+	// ContactLinkBackup.getManualLinks / getUnlinkLinks, from the bus: a contact, or its _id.
+	function clbLookup(which) {
+		return async params => {
 			if (!params.contactOrContactId) {
 				throw new Error('The \'contactOrContactId\' parameter was not specified');
 			}
-			if (typeof params.contactOrContactId === 'object') {
-				throw new TypeError('contact.getLinkHash is not a function');
+			let contact = params.contactOrContactId;
+			if (typeof contact !== 'object') {
+				contact = (await db.get([String(contact)]))[0];
 			}
-			// The old code fetched the contact and then never went on: no answer until the timeout.
-			return db.get([params.contactOrContactId]).then(() => new Promise(() => {}));
+			// An object that is no contact (it has no _kind) is answered as an id that finds none.
+			if (!contact || !contact._kind) {
+				throw new Error('ContactLinkBackup.' + which + ': failed to get the contact to get links from');
+			}
+			return clb[which](contact);
 		};
+	}
+
+	// Autolinker.suckyHackySetupWatch: linkerWatch made again, from the revision kept in db8.
+	async function setupWatch() {
+		const r = await db.findPage({from: REV_KIND, orderBy: 'revisionNumber', desc: true, limit: 1});
+		const rev = watchRevision(r.results[0] && r.results[0].revisionNumber);
+		await call(AM + '/create', activitySpec(rev < 0 ? 0 : rev));
+		return true;
 	}
 
 	function deleteOrphanedPerson(params) {
@@ -178,9 +198,7 @@ function createCommands({db, call, persons, autolinker, clb, saveNew, log = cons
 			autolinker.yieldJob(params.jobId);
 			return 'Job with id ' + params.jobId + ' is requested to yield';
 		},
-		setupWatch: () => {
-			throw new TypeError('autolinker.setupWatch is not a function');
-		},
+		setupWatch,
 		deleteOrphanedPerson,
 		resetCLBDB: () => clb.resetDB(),
 		performedManualLink: params => {
@@ -196,7 +214,7 @@ function createCommands({db, call, persons, autolinker, clb, saveNew, log = cons
 			}
 			return clb.performedManualLink(params.person1Contacts, params.person2Contacts);
 		},
-		performedUnlink: params => {
+		performedUnlink: async params => {
 			let msg = '';
 			if (!params.person) {
 				msg = 'The \'person\' parameter was not specified. ';
@@ -207,10 +225,18 @@ function createCommands({db, call, persons, autolinker, clb, saveNew, log = cons
 			if (msg.length) {
 				throw new Error(msg);
 			}
-			throw new TypeError('personUnlinkedFrom.copyOfContactIds is not a function');
+			// The person as an object with its contactIds, or its _id.
+			let person = params.person;
+			if (typeof person !== 'object') {
+				person = (await db.get([String(person)]))[0];
+			}
+			if (!person || !Array.isArray(person.contactIds)) {
+				throw new Error('The personOrPersonId or contactOrContactId is undefined.');
+			}
+			return clb.performedUnlink({contactIds: person.contactIds}, params.contactId);
 		},
-		getManualLinks: clbLookup(),
-		getUnlinkLinks: clbLookup()
+		getManualLinks: clbLookup('getManualLinks'),
+		getUnlinkLinks: clbLookup('getUnlinkLinks')
 	};
 
 	/*
