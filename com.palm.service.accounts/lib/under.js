@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Herman van Hazendonk
-// SPDX-License-Identifier: Apache-2.0
+// Derived from Underscore.js 0.6.0 (the device's underscore framework):
+// (c) 2010 Jeremy Ashkenas, DocumentCloud Inc.
+// Underscore is freely distributable under the terms of the MIT license.
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 'use strict';
 

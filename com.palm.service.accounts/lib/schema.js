@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /*
 	The JSON Schema validator the old service validated account templates
 	with: Foundations' foundations.json Json.Schema (javascript/schema.js of
@@ -6,7 +7,7 @@
 	JSONSchema validator, below as it was, MIT licensed:
 
 	Copyright (c) 2007 Kris Zyp SitePen (www.sitepen.com)
-	Licensed under the MIT license.
+	Licensed under the MIT (MIT-LICENSE.txt) license.
 
 	It is kept as it was rather than replaced by a current validator, as it
 	decides which templates are loaded and its rules are its own: null passes
