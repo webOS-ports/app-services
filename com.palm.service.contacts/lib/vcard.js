@@ -380,20 +380,15 @@ function record(c) {
 		{accountId: c.accountId} : {}, c.id ? {_id: c.id} : {}));
 }
 
-// What never settles: the importer's chain once a card after the first has failed.
-function never() {
-	return new Promise(() => {});
-}
-
 /*
 	VCardImporter._importVCard: the cards one at a time, each read up to
 	its END line. save(contact) writes one, when importing. -> the
 	contacts read, in order (a card ended twice is there twice).
 
-	As the importer's chain of futures had it: a card that cannot be read
-	fails the import if it is the first, and leaves it waiting for good if
-	it is a later one, or if a save fails (then the command answers when
-	it times out).
+	A card that cannot be read, or a save that fails, fails the import.
+	(The old importer's chain of futures failed only for the first card,
+	and waited for good on a later one or on a failed save, so the command
+	answered only when it timed out: README.md, C2.)
 */
 async function importCards(path, save, {openError = false} = {}) {
 	let file;
@@ -408,44 +403,33 @@ async function importCards(path, save, {openError = false} = {}) {
 	}
 	const all = [];
 	let current = null;
-	for (let n = 0; ; n += 1) {
+	for (;;) {
 		let ended = false;
-		try {
-			let line = file.readLine();
-			while (line !== null) {
-				if (isBegin(line)) {
-					current = blankContact();
-					line = file.readLine();
-					continue;
-				}
-				if (isEnd(line)) {
-					ended = true;
-					break;
-				}
-				if (!current) {
-					current = blankContact();
-				}
-				handleLine(current, line, file);
+		let line = file.readLine();
+		while (line !== null) {
+			if (isBegin(line)) {
+				current = blankContact();
 				line = file.readLine();
+				continue;
 			}
-			if (ended && save && !current) {
-				throw new TypeError('Cannot read properties of null (reading \'setKind\')');
+			if (isEnd(line)) {
+				ended = true;
+				break;
 			}
-		} catch (e) {
-			if (n === 0) {
-				throw e;
+			if (!current) {
+				current = blankContact();
 			}
-			return never();
+			handleLine(current, line, file);
+			line = file.readLine();
+		}
+		if (ended && save && !current) {
+			throw new TypeError('Cannot read properties of null (reading \'setKind\')');
 		}
 		if (!ended) {
 			return all;
 		}
 		if (save) {
-			try {
-				await save(current);
-			} catch (e) {
-				return never();
-			}
+			await save(current);
 		} else if (current) {
 			all.push(current);
 		}

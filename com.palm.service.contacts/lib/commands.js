@@ -198,9 +198,9 @@ function createCommands({db, call, persons, photos, prefs, model, G, log = conso
 				}
 			}
 		} catch (e) {
-			// The importer read the account in a callback whose failure went nowhere.
+			// The old importer read the account in a callback whose failure went nowhere (C2).
 			log.error(SERVICE + ': importVCard: no account info: ' + ((e && e.message) || e));
-			return never();
+			throw e;
 		}
 		if (!kind) {
 			const e = new Error('no provider for contacts could be retrieved for account: "' + accountId + '"');

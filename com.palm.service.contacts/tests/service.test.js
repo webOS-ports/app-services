@@ -111,14 +111,32 @@ describe('com.palm.service.contacts', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
-	it('importVCard with an account that cannot be read answers only when the command times out', async () => {
-		const env = await boot({timeoutsS: {importVCard: 1}});
+	it('importVCard with an account that cannot be read fails at once (C2)', async () => {
+		const env = await boot({timeoutsS: {importVCard: 5}});
 		const dir = tmpDir();
 		fs.writeFileSync(path.join(dir, 'a.vcf'), 'BEGIN:VCARD\nN:Doe;John\nEND:VCARD\n');
 		await env.db.put([{_kind: 'com.palm.app.contacts.prefs:1', listSortOrder: 'LAST_FIRST', defaultAccountId: 'gone'}]);
-		assert.equal(await env.askWithin(300, 'importVCard', {filePath: 'file://' + dir + '/a.vcf'}), 'NO REPLY');
-		const r = await env.ask('importVCard', {filePath: 'file://' + dir + '/a.vcf'});
-		assert.equal(r.errorText, 'commandTimeout in com.palm.service.contacts/importVCard');
+		const r = await env.askWithin(1000, 'importVCard', {filePath: 'file://' + dir + '/a.vcf'});
+		assert.equal(r.errorText, 'palm://com.palm.service.accounts/getAccountInfo {"accountId":"gone"}: no account gone');
+		env.stop();
+	});
+
+	it('importVCard whose save fails fails at once, with the cards before it saved (C2)', async () => {
+		const env = await boot({timeoutsS: {importVCard: 5}});
+		const dir = tmpDir();
+		fs.writeFileSync(path.join(dir, 'a.vcf'), 'BEGIN:VCARD\nN:Doe;John\nEND:VCARD\nBEGIN:VCARD\nN:Roe;Jane\nEND:VCARD\n');
+		await env.db.put([{_kind: 'com.palm.app.contacts.prefs:1', listSortOrder: 'LAST_FIRST', defaultAccountId: 'acct-g'}]);
+		const put = env.db.handle.bind(env.db);
+		let puts = 0;
+		env.db.handle = (method, args) => {
+			if (method === 'put' && ++puts === 2) {
+				env.db.failNext('put');
+			}
+			return put(method, args);
+		};
+		const r = await env.askWithin(1000, 'importVCard', {filePath: 'file://' + dir + '/a.vcf'});
+		assert.equal(r.errorCode, -3999);
+		assert.deepEqual(env.db.all('com.palm.contact:1').map(c => c.name.familyName), ['Doe']);
 		env.stop();
 	});
 
