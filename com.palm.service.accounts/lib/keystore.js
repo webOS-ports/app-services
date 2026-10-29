@@ -14,7 +14,8 @@
 	and two at once would each store what it read.
 
 	- put(accountId, name, value): the store's reply. No key yet (fetchKey
-	  failed): a new one. A key whose data is not JSON fails the put.
+	  failed): a new one. A key whose data is not JSON fails the put. A store
+	  that fails puts the old data back.
 	- get(accountId, name): {credentials}, or throws {message, errorCode:
 	  "CREDENTIALS_NOT_FOUND"} (a plain object, as the old one did) when there
 	  is no key or no such name in it.
@@ -51,12 +52,17 @@ function createKeyStore(pc) {
 			keydata = {};
 		}
 		keydata[key] = value;
-		return pc.call(KEYMGR, 'store', {
-			keyname: accountId,
-			keydata: JSON.stringify(keydata),
-			type: 'ASCIIBLOB',
-			nohide: true
-		});
+		const store = data => pc.call(KEYMGR, 'store', {keyname: accountId, keydata: data, type: 'ASCIIBLOB', nohide: true});
+		try {
+			return await store(JSON.stringify(keydata));
+		} catch (e) {
+			// The key was removed: put back what it held, so a store that fails loses only the new
+			// credentials. (The old code left the account with none: README, B9.)
+			if (fetched) {
+				await store(fetched.keydata).catch(() => {});
+			}
+			throw e;
+		}
 	}
 
 	async function get(accountId, key) {
