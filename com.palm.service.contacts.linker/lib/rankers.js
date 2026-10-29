@@ -64,7 +64,9 @@ function createRankers({db, persons, model, G, clb, linkHash}) {
 
 	/*
 		The persons a batch of finds found, one for each hit, in order. The
-		finds ask for the _id alone, and each person is then read once. They
+		finds ask for the _id alone, and each person is then read and wrapped
+		once: a person a ranker finds again is the same object, as only the
+		first hit's person is kept (add) and the others are read alone. They
 		used to bring the whole person back for every query that found it: a
 		person with many contacts and names came back many times over, and on
 		the VM a reply of 24 MB was more than luna-service takes (it drops
@@ -74,8 +76,8 @@ function createRankers({db, persons, model, G, clb, linkHash}) {
 		const responses = await db.batch(queries.map(q => ({method: q.method,
 			params: {query: Object.assign({}, q.params.query, {select: ['_id']})}})));
 		const ids = peopleOf(responses).map(r => r._id);
-		const records = new Map((await db.get([...new Set(ids)])).filter(r => r && !r._del).map(r => [r._id, r]));
-		return ids.filter(id => records.has(id)).map(id => JSON.parse(JSON.stringify(records.get(id))));
+		const found = new Map((await db.get([...new Set(ids)])).filter(r => r && !r._del).map(r => [r._id, persons.wrap(r)]));
+		return ids.filter(id => found.has(id)).map(id => found.get(id));
 	}
 
 	async function similarName(person, contact, weights) {
@@ -105,8 +107,7 @@ function createRankers({db, persons, model, G, clb, linkHash}) {
 		if (!queries.length) {
 			return;
 		}
-		for (const raw of await personsFound(queries)) {
-			const p = persons.wrap(raw);
+		for (const p of await personsFound(queries)) {
 			const pname = p.rec.name || {};
 			if (onlyCompany) {
 				if (model.fullName(pname) || (p.rec.organization && p.rec.organization.title)) {
@@ -194,8 +195,7 @@ function createRankers({db, persons, model, G, clb, linkHash}) {
 			return parsed[v];
 		};
 		let linked = numbers.map(n => (n.type === MOBILE ? n : undefined));
-		for (const raw of results) {
-			const p = persons.wrap(raw);
+		for (const p of results) {
 			const theirs = p.rec.phoneNumbers.map(n => (n.type === MOBILE ? n : undefined));
 			if (theirs.length < 1) {
 				continue;
@@ -233,8 +233,8 @@ function createRankers({db, persons, model, G, clb, linkHash}) {
 			if (!queries.length) {
 				return;
 			}
-			for (const raw of await personsFound(queries)) {
-				add(weights, similarity, persons.wrap(raw), true);
+			for (const p of await personsFound(queries)) {
+				add(weights, similarity, p, true);
 			}
 		};
 	}
