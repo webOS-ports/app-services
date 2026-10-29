@@ -16,6 +16,8 @@
 
 const LINK_KIND = 'com.palm.manualLink:1';
 const UNLINK_KIND = 'com.palm.manualUnlink:1';
+// Link hashes whose manual unlinks one batch looks up (two finds each).
+const UNLINK_HASHES = 100;
 
 function record(kind, a, b) {
 	return {_kind: kind, contactEntityA: a, contactEntityB: b};
@@ -146,6 +148,35 @@ function createClb({db, linkHash}) {
 		return {results: ((a && a.results) || []).concat((b && b.results) || [])};
 	}
 
+	/*
+		The manual unlinks naming each of these link hashes (strings), as
+		linksOf gives them: hash -> {results}, or {error} when the batch with
+		its finds failed. The finds go in batches of UNLINK_HASHES hashes at
+		a time, all at once, to keep each message small.
+	*/
+	async function unlinksByHash(hashes) {
+		const out = new Map();
+		const chunks = [];
+		for (let i = 0; i < hashes.length; i += UNLINK_HASHES) {
+			chunks.push(hashes.slice(i, i + UNLINK_HASHES));
+		}
+		await Promise.all(chunks.map(async chunk => {
+			try {
+				const responses = await db.batch([].concat(...chunk.map(val => ['contactEntityA', 'contactEntityB'].map(prop =>
+					({method: 'find', params: {query: {from: UNLINK_KIND, where: [{prop, op: '=', val}]}}})))));
+				chunk.forEach((h, i) => {
+					const a = responses[2 * i], b = responses[2 * i + 1];
+					out.set(h, {results: ((a && a.results) || []).concat((b && b.results) || [])});
+				});
+			} catch (e) {
+				for (const h of chunk) {
+					out.set(h, {error: e});
+				}
+			}
+		}));
+		return out;
+	}
+
 	// Not Errors: the old code failed with these objects, and the reply says so.
 	async function resetDB() {
 		const links = await db.delQuery({from: LINK_KIND});
@@ -162,7 +193,8 @@ function createClb({db, linkHash}) {
 	return {
 		performedManualLink, performedUnlink, resetDB,
 		getManualLinks: contact => linksOf(LINK_KIND, contact),
-		getUnlinkLinks: contact => linksOf(UNLINK_KIND, contact)
+		getUnlinkLinks: contact => linksOf(UNLINK_KIND, contact),
+		unlinksByHash
 	};
 }
 

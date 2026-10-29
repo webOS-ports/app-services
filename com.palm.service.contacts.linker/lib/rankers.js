@@ -397,8 +397,34 @@ function createRankers({db, persons, model, G, clb, linkHash}) {
 			ids.push(...weights[key].person.rec.contactIds);
 		}
 		const contacts = await db.get(ids);
-		await mapReduce(contacts, async c => {
-			const r = await clb.getUnlinkLinks(c);
+		/*
+			The unlinks of every contact are read at once: each contact's link
+			hash, then one batch for all of them, where each contact had a batch
+			of its own. A contact whose hash fails fails the run as before, and
+			a hash that is not a string is looked up alone, as before. The answer
+			is the first failure: those of the hashes come first.
+		*/
+		const failures = [];
+		const FAILED = {};
+		const hashes = await Promise.all(contacts.map(c => Promise.resolve().then(() => linkHash.linkHash(c))
+			.then(h => h.linkHash).catch(e => {
+				failures.push(e);
+				return FAILED;
+			})));
+		const byHash = await clb.unlinksByHash(Array.from(new Set(hashes.filter(h => typeof h === 'string'))));
+		const lookUp = async (c, h) => {
+			if (typeof h !== 'string') {
+				return clb.getUnlinkLinks(c);
+			}
+			const got = byHash.get(h);
+			if (got.error) {
+				throw got.error;
+			}
+			return got;
+		};
+		const pairs = contacts.map((c, i) => [c, hashes[i]]).filter(([, h]) => h !== FAILED);
+		await mapReduce(pairs, async ([c, h]) => {
+			const r = await lookUp(c, h);
 			if (!r || !r.results) {
 				throw new Error('Autolinker.manualUnlinks: did not get a result when getting manualUnlinks');
 			}
@@ -442,7 +468,12 @@ function createRankers({db, persons, model, G, clb, linkHash}) {
 					}
 				}
 			});
+		}).catch(e => {
+			failures.push(e);
 		});
+		if (failures.length) {
+			throw failures[0];
+		}
 	}
 
 	/*

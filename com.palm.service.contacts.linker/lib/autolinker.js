@@ -184,7 +184,20 @@ function createAutolinker({db, persons, rankers, log = console}) {
 		if (others.length) {
 			await db.del(others.map(p => p.rec._id));
 		}
-		await persons.fixup(keeper, {others, listSortOrder});
+		// The keeper's contacts are those just loaded, when they hold all of its new ids.
+		const loaded = new Map();
+		for (const p of reload) {
+			for (const c of p.contacts) {
+				loaded.set(c._id, c);
+			}
+		}
+		const ids = keeper.rec.contactIds;
+		if (ids.every(id => loaded.has(id))) {
+			keeper.contacts = ids.map(id => loaded.get(id));
+			await persons.fixup(keeper, {others, listSortOrder, contacts: keeper.contacts});
+		} else {
+			await persons.fixup(keeper, {others, listSortOrder});
+		}
 		await persons.save(keeper);
 	}
 
