@@ -124,12 +124,29 @@ describe('calendar: findNextOccurrence', () => {
 		assert.equal(em.findNextOccurrence(e, Date.UTC(2026, 10, 9, 12, 0)), Date.UTC(2026, 10, 22, 8, 0));
 	});
 
-	it('old bug 13: an exdate of a daily event skips the day after it as well', async () => {
+	it('bug 13: an exception date of a daily event skips that day only', async () => {
 		const e = ev({dtstart: Date.UTC(2026, 9, 22, 7, 0), dtend: Date.UTC(2026, 9, 22, 8, 0), rrule: {freq: 'DAILY'},
 			exdates: ['20261024T090000']});
 		await em.findNextOccurrenceTimezonePrep([e]);
-		// The 24th is excluded; the 25th (09:00 CET, 08:00Z) is not, but the 26th comes back.
-		assert.equal(em.findNextOccurrence(e, now), Date.UTC(2026, 9, 26, 8, 0));
+		// The 24th is excluded; next is the 25th, 09:00 CET (08:00Z).
+		assert.equal(em.findNextOccurrence(e, now), Date.UTC(2026, 9, 25, 8, 0));
+	});
+
+	it('bug 13: an exception date of a weekly event on two days skips that day only', async () => {
+		const e = ev({dtstart: Date.UTC(2026, 10, 9, 8, 0), dtend: Date.UTC(2026, 10, 9, 9, 0),
+			rrule: {freq: 'WEEKLY', rules: [{ruleType: 'BYDAY', ruleValue: [{day: 1}, {day: 3}]}]},
+			exdates: ['20261116T090000']});
+		await em.findNextOccurrenceTimezonePrep([e]);
+		// Monday the 16th is excluded; Wednesday the 18th is next.
+		assert.equal(em.findNextOccurrence(e, Date.UTC(2026, 10, 14, 12, 0)), Date.UTC(2026, 10, 18, 8, 0));
+	});
+
+	it('an exception date counts as one of a COUNT\'s occurrences', async () => {
+		const e = ev({dtstart: Date.UTC(2026, 9, 20, 7, 0), dtend: Date.UTC(2026, 9, 20, 8, 0),
+			rrule: {freq: 'DAILY', count: 5}, exdates: ['20261024T090000']});
+		await em.findNextOccurrenceTimezonePrep([e]);
+		// The 20th to the 24th, the 24th excluded: nothing after the 23rd.
+		assert.equal(em.findNextOccurrence(e, Date.UTC(2026, 9, 23, 12, 0)), false);
 	});
 
 	it('a count or an until ends the series', async () => {
