@@ -204,3 +204,13 @@ test('mojo replies: returnValue added, -9999 for no errorCode, a plain object as
 	d.errorCode = '';
 	assert.strictEqual(exception(d).errorCode, '');
 });
+
+test('B9: keystore: a store that fails keeps the credentials the key had', async () => {
+	const km = fakeKeymanager();
+	const ks = createKeyStore(createPalmCall(km.bus));
+	await ks.put('A1', 'common', {password: 'fake-1'});
+	km.failStore(1);
+	await assert.rejects(ks.put('A1', 'imap', {token: 'fake-2'}), e => e.errorCode === 1 && !/fake-/.test(e.message));
+	assert.deepStrictEqual(JSON.parse(km.keys.get('A1')), {common: {password: 'fake-1'}});
+	assert.deepStrictEqual(await ks.get('A1', 'common'), {credentials: {password: 'fake-1'}});
+});
