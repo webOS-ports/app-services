@@ -479,7 +479,7 @@ function createCommands({db, pc, keystore, templates, reloadTemplates, log = con
 						const provider = _.detect(template.capabilityProviders, c => c.id === id);
 						if (provider && provider.onEnabled) {
 							transports.push({address: provider.onEnabled, params: Object.assign({}, params, {capabilityProviderId: id}),
-								capabilityProviderId: provider.id});
+								capabilityProviderId: provider.id, flip: true});
 						}
 					}
 				};
@@ -491,21 +491,26 @@ function createCommands({db, pc, keystore, templates, reloadTemplates, log = con
 			if (!(e instanceof TransportError)) {
 				throw e;
 			}
-			// A transport failed: flip the failed providers back, and fail with TRANSPORT_FAILURE (B7).
+			// A transport failed: fail with TRANSPORT_FAILURE, and turn back the providers whose
+			// onEnabled failed. (The old code turned back every failed call's provider: a failed
+			// onCredentialsChanged disabled its provider, and one of the template, or one after a
+			// change of credentials only, failed the rollback with a TypeError: README, B7.)
 			const failed = e.failed;
 			const err = failed[0].exception;
-			const cpIds = _.pluck(newAccount.capabilityProviders, 'id');
-			failed.forEach(bad => {
-				const idx = cpIds.indexOf(bad.item.capabilityProviderId);
-				if (idx !== -1) {
-					cpIds.splice(idx, 1);
-				} else {
-					cpIds.push(bad.item.capabilityProviderId);
-				}
-			});
-			const newCps = providersArray(template, cpIds.map(id => ({id})));
+			const flips = failed.filter(bad => bad.item.flip);
 			const saved = transportFailure('Failed to notify transports: ' + failed.map(r => r.item.address).join(','), err);
-			await db.merge([{_id: args.accountId, capabilityProviders: newCps}]);
+			if (flips.length) {
+				const cpIds = _.pluck(newAccount.capabilityProviders || account.capabilityProviders, 'id');
+				flips.forEach(bad => {
+					const idx = cpIds.indexOf(bad.item.capabilityProviderId);
+					if (idx !== -1) {
+						cpIds.splice(idx, 1);
+					} else {
+						cpIds.push(bad.item.capabilityProviderId);
+					}
+				});
+				await db.merge([{_id: args.accountId, capabilityProviders: providersArray(template, cpIds.map(id => ({id})))}]);
+			}
 			throw saved;
 		}
 		return {};

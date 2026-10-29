@@ -352,3 +352,24 @@ test('B6: modifyAccount: each onEnabled call names its own provider', async () =
 			['aEnabled com.test.two.a', 'bEnabled com.test.two.b']);
 	});
 });
+
+test('B7: a failed onCredentialsChanged fails with TRANSPORT_FAILURE and leaves the providers as they are', async () => {
+	await withService({}, async s => {
+		const id = (await create(s)).result._id;
+		await new Promise(res => setTimeout(res, 1200));
+		await s.settle();
+		const providers = () => s.accounts()[0].capabilityProviders.map(c => c.id);
+		const before = providers();
+		for (const which of ['onCredentialsChanged', 'imapCredentialsChanged']) {
+			s.fail['com.test.mail/' + which] = 1;
+			const r = await s.ask('modifyAccount', {accountId: id, object: {credentials: {common: {password: 'fake-' + which}}}}, APP);
+			assert.deepStrictEqual([r.errorCode, r.errorText], ['TRANSPORT_FAILURE', 'Failed to notify transports: palm://com.test.mail/' + which]);
+			assert.deepStrictEqual(providers(), before);
+		}
+		s.fail['com.test.mail/imapCredentialsChanged'] = 1;
+		const r = await s.ask('modifyAccount', {accountId: id, object: {capabilityProviders: [{id: 'com.test.mail.imap'}, {id: 'com.test.mail.always'}],
+			credentials: {common: {password: 'fake-3'}}}}, APP);
+		assert.strictEqual(r.errorCode, 'TRANSPORT_FAILURE');
+		assert.deepStrictEqual(providers(), before);
+	});
+});
