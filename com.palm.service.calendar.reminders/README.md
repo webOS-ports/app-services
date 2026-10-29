@@ -82,8 +82,6 @@ these numbers):
    results array instead of on its record, so it never cancels them.
    Harmless: they are created again with `replace`, which takes their
    place.
-5. An exception date of a length other than 8, 15 or 16 ends the check of
-   the event's other exception dates.
 6. The time zone manager's daylight saving test is `dstStart <= t < dstEnd`,
    which is never true where DST spans the new year (the southern
    hemisphere), so an event in such a zone, seen from a device in another
@@ -146,6 +144,9 @@ Mended since the first version:
    way went off at the start of the event; and of weeks and days only the
    last counted (`-P1W2D` was two days). Now any number of digits is read,
    and weeks and days are added up.
+5. An exception date of a length other than 8, 15 or 16 ended the check of
+   the event's other exception dates, so the ones after it were not
+   excluded. Now it is passed over.
 
 These things deliberately differ from the old service:
 
