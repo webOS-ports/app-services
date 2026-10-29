@@ -143,6 +143,45 @@ test('resync: what the cloud dropped goes here only; renames and captions follow
 	assert.equal(albums[0].total.images, 2);
 });
 
+test('an empty placeholder album that becomes a real folder, and back, stays the same album', async t => {
+	const {bus, svc, api, cloud} = setup(t, {
+		albums: [{aid: '', name: 'Camera Uploads', size: {images: 0, videos: 0}}, {aid: '', name: 'Ignored twin'}],
+		photos: {}
+	});
+	await svc.start();
+	await api.syncSingleAccount({accountId: 'acct1'});
+	const [placeholder] = albumsOf(bus, 'acct1');
+	assert.equal(placeholder.aid, '');
+
+	cloud.albums = [{aid: 'WnJz2ZjA', name: 'Camera Uploads', size: {images: 1, videos: 0}}];
+	cloud.photos.WnJz2ZjA = [{pid: 'id:1', src_big: 'https://dl.example/t/AAA?token=s3cret', type: 'image', fileName: 'one.jpg'}];
+	assert.equal((await api.syncSingleAccount({accountId: 'acct1'})).returnValue, true);
+	let albums = albumsOf(bus, 'acct1');
+	assert.deepEqual(albums.map(a => [a._id, a.aid]), [[placeholder._id, 'WnJz2ZjA']], 'same entry, new aid');
+	assert.deepEqual(photosOf(bus, 'acct1').map(p => [p.albumId, p[TPL].pid]), [[placeholder._id, 'id:1']]);
+
+	cloud.albums = [{aid: '', name: 'Camera Uploads', size: {images: 0, videos: 0}}];
+	assert.equal((await api.syncSingleAccount({accountId: 'acct1'})).returnValue, true);
+	albums = albumsOf(bus, 'acct1');
+	assert.deepEqual(albums.map(a => [a._id, a.aid]), [[placeholder._id, '']], 'and back');
+	assert.equal(photosOf(bus, 'acct1').length, 0);
+
+	// Another name is another album: the placeholder goes, the folder is new
+	cloud.albums = [{aid: '/Trips', name: 'Trips', size: {images: 0, videos: 0}}];
+	await api.syncSingleAccount({accountId: 'acct1'});
+	albums = albumsOf(bus, 'acct1');
+	assert.equal(albums.length, 1);
+	assert.notEqual(albums[0]._id, placeholder._id);
+
+	// Two real folders of one name are two albums, even when one replaces the other
+	const trips = albums[0];
+	cloud.albums = [{aid: '/Old/Trips', name: 'Trips', size: {images: 0, videos: 0}}];
+	await api.syncSingleAccount({accountId: 'acct1'});
+	albums = albumsOf(bus, 'acct1');
+	assert.deepEqual(albums.map(a => a.aid), ['/Old/Trips']);
+	assert.notEqual(albums[0]._id, trips._id);
+});
+
 test('a failing download fails the sync but keeps the rest', async t => {
 	const {bus, svc, api, files} = setup(t);
 	files.delete('https://dl.example/t/BBB?token=s3cret');
@@ -155,6 +194,38 @@ test('a failing download fails the sync but keeps the rest', async t => {
 	files.set('https://dl.example/t/BBB?token=s3cret', png(10, 10));
 	assert.equal((await api.syncSingleAccount({accountId: 'acct1'})).returnValue, true);
 	assert.equal(photosOf(bus, 'acct1').length, 3, 'picked up next time');
+});
+
+test('listPhotos is told what the service has; a temporary copy is fetched to be removed', async t => {
+	const {bus, svc, api, cloud, download} = setup(t);
+	const asked = [];
+	const listPhotos = bus.providers[SVC].listPhotos;
+	bus.providers[SVC].listPhotos = p => {
+		asked.push(p);
+		return listPhotos(p);
+	};
+	cloud.photos['/Trips'][0].temporary = true;
+	await svc.start();
+	await api.syncSingleAccount({accountId: 'acct1'});
+	assert.deepEqual(asked.map(p => [p.aid, p.have]), [['/Camera Uploads', []], ['/Trips', []]], 'new albums: nothing yet');
+	assert.deepEqual(download.fetched.map(f => [f.url, f.removeSource]).sort(), [
+		['https://dl.example/t/AAA?token=s3cret', false],
+		['https://dl.example/t/BBB?token=s3cret', false],
+		['https://dl.example/t/CCC?token=s3cret', true]
+	]);
+
+	asked.length = 0;
+	await api.syncSingleAccount({accountId: 'acct1'});
+	assert.deepEqual(asked.map(p => [p.aid, [...p.have].sort()]), [['/Camera Uploads', ['id:1', 'id:2']], ['/Trips', ['id:3']]]);
+	assert.equal(photosOf(bus, 'acct1').length, 3);
+});
+
+test('a download may copy local files from the media root only', async t => {
+	const {svc, api, paths, download} = setup(t);
+	await svc.start();
+	await api.syncSingleAccount({accountId: 'acct1'});
+	assert.ok(download.fetched.length);
+	assert.ok(download.fetched.every(f => f.localRoot === paths.media));
 });
 
 test('something that is no image is kept but never shown, and not fetched again', async t => {

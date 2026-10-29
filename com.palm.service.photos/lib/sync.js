@@ -92,6 +92,27 @@ class SyncEngine {
 			}
 		}
 
+		// A connector with no photos lists one empty placeholder album (aid "": MEGA's and
+		// HiDrive's "Camera Uploads"). The first upload into it makes a real folder with an aid
+		// of its own, and deleting its last photo turns it back. To whoever is looking at it
+		// that is the same album, so the entry takes the new aid instead of being removed and
+		// added again under another _id.
+		for (const album of local) {
+			const aid = String(album.aid);
+			if (remoteAlbums.has(aid)) {
+				continue;
+			}
+			const twin = [...remoteAlbums.keys()].find(other => !byAid.has(other) && (aid === '' || other === '') &&
+				(remoteAlbums.get(other).name || '') === (album.name || ''));
+			if (twin !== undefined) {
+				log.info(`album ${album.name} of ${account.templateId} is now aid "${twin}"`);
+				await this.db.merge([{_id: album._id, aid: twin}]);
+				byAid.delete(aid);
+				album.aid = twin;
+				byAid.set(twin, album);
+			}
+		}
+
 		for (const album of local) {
 			if (!remoteAlbums.has(String(album.aid))) {
 				log.info(`album ${album.name} is gone from ${account.templateId}`);
@@ -178,7 +199,20 @@ class SyncEngine {
 		if (!cap.getPhotos) {
 			return;
 		}
-		const params = {accountId: account.accountId, aid: album.aid};
+		const tpl = account.templateId;
+		const local = isNew ? [] :
+			await this.db.find({from: MEDIA_KIND, where: [{prop: 'albumId', op: '=', val: album._id}]});
+		const have = new Map();
+		for (const entry of local) {
+			const nested = entry[tpl];
+			if (nested && nested.pid !== undefined) {
+				have.set(String(nested.pid), entry);
+			}
+		}
+
+		// `have`: what is never fetched again, so a provider that has to make a copy of each
+		// photo first (MEGA decrypts them) need not make one of these. Others ignore it.
+		const params = {accountId: account.accountId, aid: album.aid, have: [...have.keys()]};
 		if (account.templateId === 'com.palm.snapfish') {
 			params.albumId = album.aid;       // what that service reads
 		}
@@ -201,17 +235,6 @@ class SyncEngine {
 			const t = {images: remote.size - videos, videos};
 			if (!album.total || album.total.images !== t.images || album.total.videos !== t.videos) {
 				await this.db.merge([{_id: album._id, total: t}]);
-			}
-		}
-
-		const tpl = account.templateId;
-		const local = isNew ? [] :
-			await this.db.find({from: MEDIA_KIND, where: [{prop: 'albumId', op: '=', val: album._id}]});
-		const have = new Map();
-		for (const entry of local) {
-			const nested = entry[tpl];
-			if (nested && nested.pid !== undefined) {
-				have.set(String(nested.pid), entry);
 			}
 		}
 
@@ -267,7 +290,8 @@ class SyncEngine {
 		}
 		const video = p.type === 'video';
 		const file = await this.targetFor(album, p, url);
-		await this.download(url, file, {signal});
+		// A provider's temporary copy (temporary:true) is removed once it is copied
+		await this.download(url, file, {signal, localRoot: this.paths.media, removeSource: p.temporary === true});
 
 		let finalPath = file;
 		let readable = true;
