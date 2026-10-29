@@ -404,12 +404,23 @@ describe('com.palm.service.contacts', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
-	it('sortOrderChanged called by hand writes the keys, then fails on the missing activity', async () => {
+	it('sortOrderChanged called by hand writes the keys and answers true (C9)', async () => {
 		const env = await boot();
 		await env.db.put([person('p1')]);
-		const r = await env.ask('sortOrderChanged', {});
-		assert.equal(r.errorText, 'MojoService: no errorCode supplied Cannot read properties of undefined (reading \'activityId\')');
+		assert.equal(await env.ask('sortOrderChanged', {}), true);
 		assert.equal(env.db.all(PERSON)[0].sortKey, 'lee\tann');
+		assert.equal(env.of('com.palm.activitymanager', 'complete').length, 0);
+		env.stop();
+	});
+
+	it('sortOrderChanged writes only the sort keys that change (C9)', async () => {
+		const env = await boot();
+		await env.db.put([{_id: 'pr', _kind: 'com.palm.app.contacts.prefs:1', listSortOrder: 'FIRST_LAST'},
+			person('p1', {sortKey: 'ann\tlee'}), person('p2', {sortKey: 'lee\tann'})]);
+		await env.ask('sortOrderChanged', {$activity: {activityId: 5, trigger: {returnValue: true}}}, AM);
+		const merged = env.of('com.palm.db', 'merge').map(c => c.args.objects);
+		assert.deepEqual(merged, [[{_id: 'p2', sortKey: 'ann\tlee'}]]);
+		assert.deepEqual(env.db.all(PERSON).map(p => p.sortKey), ['ann\tlee', 'ann\tlee']);
 		env.stop();
 	});
 

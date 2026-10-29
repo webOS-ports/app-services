@@ -88,10 +88,11 @@ test. The old service's bugs, by number:
   `WORK`, a home one `HOME`, and one with no label is written `URL:`.
 - C8 (mended): `findPersonByPhone` with `returnAllMatches` lists the
   worst match first. It now lists the best first.
-- C9: `sortOrderChanged` reads the persons without their `sortKey`, so it
-  rewrites every person's sort key every time; called by hand (no
-  `$activity`) it writes them and then fails with a `TypeError` on the
-  missing activity.
+- C9 (mended): `sortOrderChanged` reads the persons without their
+  `sortKey`, so it rewrites every person's sort key every time; called by
+  hand (no `$activity`) it writes them and then fails with a `TypeError`
+  on the missing activity. It now writes only the keys that change, and
+  by hand answers `true` once they are written.
 - C10: `refetchPhoto`'s default crop for a photo with no `cropInfo` has
   the wrong shape: the image service is sent no focus and a scale of
   `null`.
