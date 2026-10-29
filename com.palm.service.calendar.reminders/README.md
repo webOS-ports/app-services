@@ -134,6 +134,14 @@ Mended since the first version:
    scan were lost; the status was `FAIL`, so every later run started over
    and failed on the same event again. Now that event is skipped, and
    logged.
+14. (Found on the LuneOS VM.) The service's client permissions
+    (`files/sysbus/com.palm.service.calendar.reminders.perm.json`) did not
+    name `time.query` or `application.launcher`, so the hub denied its
+    calls to systemservice's `getSystemTime` and `getTimeZoneRules` and to
+    the application manager's `launch`. The time zone manager then waited
+    for ever (11), so every scan of events with an alarm ended in the 60 s
+    command timeout: no reminder was ever stored, nor shown. Both groups
+    are now named.
 
 These things deliberately differ from the old service:
 
