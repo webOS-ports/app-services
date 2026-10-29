@@ -59,8 +59,6 @@ them by these numbers):
 - The manual unlink check reuses one variable for the contact ids it walks,
   so it can read past the end of a person's ids and fail the contact with
   a `TypeError`.
-- When there are several speed-dial backups, every one of them restores the
-  first one's numbers.
 
 These things deliberately differ from the old service:
 

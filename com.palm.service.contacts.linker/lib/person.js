@@ -416,9 +416,9 @@ function createPersons({db, call, model, G, linkHash, log = console}) {
 		const hashes = await linkHashesOf(all);
 		const backups = (await db.findPage({from: SPEED_DIAL_BACKUP_KIND,
 			where: [{prop: 'contactBackupHash', op: '=', val: hashes}]})).results;
-		// SpeedDialBackup.getBackupsForLinkHashes makes every one of them the first.
-		for (let i = 0; i < backups.length; i++) {
-			for (const sd of (backups[0].speedDials || [])) {
+		// Each backup's own speed dials. The old code read the first backup's for every one.
+		for (const backup of backups) {
+			for (const sd of (backup.speedDials || [])) {
 				rec.phoneNumbers.some(n => {
 					const hashed = sd.hashedPhoneNumber === undefined ? null : sd.hashedPhoneNumber;
 					const equal = n.value ? b64md5(n.value) === hashed : n.value === hashed;

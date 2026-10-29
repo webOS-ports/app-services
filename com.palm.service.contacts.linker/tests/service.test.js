@@ -323,6 +323,24 @@ describe('saveNewPersonAndContacts', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
+	it('restores the speed dials of every backup of a person\'s contacts, not the first one\'s for all', async () => {
+		const env = await boot();
+		await env.db.put([{_kind: 'com.palm.person.speeddialbackup:1', contactBackupHash: 'Local|R1',
+			speedDials: [{hashedPhoneNumber: b64md5('5551234'), key: '4'}]},
+		{_kind: 'com.palm.person.speeddialbackup:1', contactBackupHash: 'Local|R2',
+			speedDials: [{hashedPhoneNumber: b64md5('5559876'), key: '7'}]}]);
+		const [a] = await env.putContacts([
+			Object.assign(name('Ann', 'Lee'), {remoteId: 'R1', phoneNumbers: [{value: '5551234', type: 'type_fax'}]}),
+			Object.assign(name('Ann', 'Lee'), {remoteId: 'R2', phoneNumbers: [{value: '5559876', type: 'type_fax'}]})]);
+		await env.ask('forceAutolink');
+		const dials = {};
+		for (const n of env.personOf(a._id).phoneNumbers) {
+			dials[n.value] = n.speedDial;
+		}
+		assert.deepEqual(dials, {5551234: '4', 5559876: '7'});
+		env.stop();
+	});
+
 	it('keeps the _id of every contact that has one, also of one right after another (README: Q7.5)', async () => {
 		const env = await boot();
 		const [a, b] = await env.putContacts([name('Ann', 'Lee'), name('Bob', 'Kay')]);
