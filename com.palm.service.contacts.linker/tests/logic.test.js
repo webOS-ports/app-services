@@ -7,7 +7,8 @@
 	The parts that need no device frameworks: the mojoservice reply envelope,
 	the PalmCall error text, the watch's rearm, job ids, the contact order of
 	a merged person, link hashes, and how saveNewPersonAndContacts takes in
-	and shows a contact.
+	and shows a contact, and the normalised phone numbers (over a stand-in
+	phonenumberlib).
 */
 
 const {describe, it} = require('node:test');
@@ -19,6 +20,7 @@ const {createJobIds, orderContactIds} = require('../lib/autolinker');
 const {createLinkHash, idPart} = require('../lib/linkhash');
 const {takeIn, shown} = require('../lib/savenew');
 const {meetsThreshold, SIMILAR} = require('../lib/rankers');
+const {createModel} = require('../lib/model');
 
 describe('the mojoservice reply', () => {
 	it('adds returnValue to an object, keeps true and a sentence as they are', () => {
@@ -232,5 +234,44 @@ describe('similarity', () => {
 		assert.equal(meetsThreshold({weight: 99}), false);
 		const all = SIMILAR.name.weight + SIMILAR.mobile.weight + SIMILAR.email.weight + SIMILAR.im.weight;
 		assert.equal(meetsThreshold({weight: all + SIMILAR.manualUnlink.weight}), false);
+	});
+});
+
+describe('normalised phone numbers', () => {
+	// phonenumberlib's parse of a US number with no leading digit, counted.
+	function parser() {
+		const P = {parses: 0, Parse(value) {
+			P.parses++;
+			const digits = value.replace(/\D/g, '');
+			return digits ? {regionMetaData: {countryCode: '1'}, leadingDigit: '', nationalNumber: digits} : undefined;
+		}};
+		return P;
+	}
+
+	it('the stored and the search form of one number, asked for in either order', () => {
+		for (const searchFirst of [true, false]) {
+			const model = createModel({G: {}, P: parser()});
+			const ask = [['408-555-1234', true], ['408-555-1234', false]];
+			for (const [value, search] of searchFirst ? ask : ask.reverse()) {
+				assert.equal(model.normalizePhoneNumber(value, search), search ? '-4321555804-' : '-4321555804--1-+');
+			}
+		}
+	});
+
+	it('parses a number once, however often it is asked for', () => {
+		const P = parser();
+		const model = createModel({G: {}, P});
+		for (let i = 0; i < 3; i++) {
+			assert.equal(model.normalizePhoneNumber('555 1234', true), '-4321555-');
+			assert.equal(model.normalizePhoneNumber('555 1234'), '-4321555--1-+');
+		}
+		assert.equal(P.parses, 2);
+	});
+
+	it('a number with no digits, and an object, keep the old forms', () => {
+		const model = createModel({G: {}, P: parser()});
+		assert.equal(model.normalizePhoneNumber('abc'), '-cba---');
+		assert.equal(model.normalizePhoneNumber({subscriberNumber: '123'}, true), '-321-');
+		assert.throws(() => model.normalizePhoneNumber(5), /number passed is not a string or an object/);
 	});
 });

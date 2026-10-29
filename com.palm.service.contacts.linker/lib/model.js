@@ -129,8 +129,18 @@ function syncSourcePriority(contact) {
 	createModel({G, P, phoneRegion}): the rules that need Globalization (G)
 	and phonenumberlib (P).
 */
+// Values normalizePhoneNumber remembers before it starts again.
+const NORMALIZED_MAX = 20000;
+
 function createModel({G, P, phoneRegion = 'us'}) {
 	const region = phoneRegion.toUpperCase();
+	/*
+		normalizePhoneNumber's results by value. A phone search compares the
+		numbers of every person it finds, so a person with many numbers had
+		them parsed again for each contact linked to it; on 300 contacts made
+		to look alike, the parse was 63% of the run.
+	*/
+	const normalized = new Map();
 
 	function fullName(name) {
 		name = name || {};
@@ -150,14 +160,25 @@ function createModel({G, P, phoneRegion = 'us'}) {
 		string nor an object is refused, as the framework's Assert refused it.
 	*/
 	function normalizePhoneNumber(value, wantSearchFormat) {
-		let parsed;
 		if (typeof value === 'string') {
-			parsed = P.Parse(value, region);
-		} else if (value && typeof value === 'object') {
-			value = value.subscriberNumber;
-		} else {
-			throw new Error('PhoneNumber.normalizePhoneNumber - number passed is not a string or an object');
+			const key = (wantSearchFormat ? 's' : 'n') + value;
+			let n = normalized.get(key);
+			if (n === undefined) {
+				if (normalized.size >= NORMALIZED_MAX) {
+					normalized.clear();
+				}
+				n = normalizeParsed(P.Parse(value, region), value, wantSearchFormat);
+				normalized.set(key, n);
+			}
+			return n;
 		}
+		if (value && typeof value === 'object') {
+			return normalizeParsed(undefined, value.subscriberNumber, wantSearchFormat);
+		}
+		throw new Error('PhoneNumber.normalizePhoneNumber - number passed is not a string or an object');
+	}
+
+	function normalizeParsed(parsed, value, wantSearchFormat) {
 		let n = '';
 		if (!parsed) {
 			if (!wantSearchFormat) {
