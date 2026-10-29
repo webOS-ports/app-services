@@ -1,8 +1,7 @@
 // Copyright (c) 2026 Herman van Hazendonk
-// SPDX-License-Identifier: Apache-2.0
-//
-// From the old service's utils.js and reminder-assistant.js,
-// Copyright (c) 2010-2013 LG Electronics, Inc., Apache License 2.0.
+// Derived from the old service's utils.js and reminder-assistant.js, Copyright (c)
+// 2010-2013 LG Electronics, Inc., licensed under the Apache License, Version 2.0.
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 'use strict';
 

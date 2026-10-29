@@ -1,23 +1,33 @@
 # Copyright and License Information
 
-All content, including all source code files and documentation files in this repository unless otherwise noted are:
+This service is a rewrite, for Node 22, of the calendar reminders service
+that ran on mojoservice:
+
+ Copyright (c) 2026 Herman van Hazendonk
+
+It is licensed under the GNU General Public License, version 3 or (at your
+option) any later version: see COPYING. The rest of the app-services
+repository keeps its own licence.
+
+The rewrite follows the old service and the calendar framework closely, and
+the files ported from them (lib/alarm.js, calendar.js, commands.js and
+reminders.js) say so in their headers, as do lib/mojo.js and lib/db.js for
+mojoservice and Foundations. That code is:
 
  Copyright (c) 2010-2013 LG Electronics, Inc.
+ Copyright (c) 2009-2012 Hewlett-Packard Development Company, L.P.
 
-All content, including all source code files and documentation files in this repository unless otherwise noted are:
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this content except in compliance with the License.
-You may obtain a copy of the License at
+licensed under the Apache License, Version 2.0 (see LICENSE), which allows
+it to be part of a GPL-3.0 work. lib/datejs.js is derived from DateJS 1.0
+Alpha-1:
 
-http://www.apache.org/licenses/LICENSE-2.0
+ Copyright (c) 2006-2007, Coolite Inc.
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
-DateJS 1.0 Alpha-1 by Coolite Inc. is licensed under the MIT License (see NOTICE).
+licensed under the MIT License, whose notice it carries (see also NOTICE).
+The files kept from the old service (db/, desktop-support/,
+files/, schema.txt and com.palm.service.calendar.reminders.service) are LG
+Electronics' and stay under the Apache License, Version 2.0 (the client
+permissions file got two more groups, bug 14).
 
 Quick Info
 -----------
