@@ -78,16 +78,6 @@ bugs are then mended one commit at a time, each with its own test. These
 are the ones that are still there (the code and tests refer to them by
 these numbers):
 
-1. activitymanager will not `complete` an activity that is waiting:
-   "Invalid transition: unsatisfied -> complete" (errorCode -1000). The
-   service moves its wake and autoclose activities with
-   `complete({restart: true})`, so this fails whenever they have not fired
-   yet: an event added before the next reminder, a second snooze, a
-   reminder deleted or dismissed while it was the next one. The failure
-   ends the command, so what comes after it is not done either: the db
-   watch is not armed again, and the service no longer sees calendar
-   changes until the next boot. An activity someone else cancelled (an id
-   activitymanager no longer knows) fails the same way, every time.
 2. The error handlers of the two reminder queries (next wake, next
    autoclose) and of onInit's event query read the error again, so a failed
    query leaves the command without an answer until it times out.
@@ -125,6 +115,20 @@ these numbers):
     skips the occurrence after it as well: the calendar framework counts the
     exception as the occurrence it was looking for, and goes on from the end
     of its search window.
+
+Mended since the first version:
+
+1. activitymanager will not `complete` an activity that is waiting
+   ("Invalid transition: unsatisfied -> complete", errorCode -1000), and the
+   old service moved its wake and autoclose activities with
+   `complete({restart: true})`. It failed whenever they had not fired yet
+   (an event added before the next reminder, a second snooze, a reminder
+   deleted or dismissed while it was the next one); the failure ended the
+   command, the db watch was not armed again, and the service no longer saw
+   calendar changes until the next boot. An activity someone else cancelled
+   failed the same way, every time. Now one that cannot be completed is
+   created again under its name (`replace`), or cancelled when there is no
+   reminder left to wait for; the same for the db watch.
 
 These things deliberately differ from the old service:
 
