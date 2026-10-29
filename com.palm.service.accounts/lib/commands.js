@@ -338,8 +338,9 @@ function createCommands({db, pc, keystore, templates, reloadTemplates, log = con
 		const annotated = M.annotate(account, getTemplates(), log);
 		M.hasPermission('writePermissions', annotated, ctx, log);
 
-		// Hidden from the lists at once; a little time for the apps to update them.
-		await db.merge([{_id: args.accountId, beingDeleted: true}]);
+		// Hidden from the lists at once; a little time for the apps to update them. keepData is kept
+		// with it, for a delete that is cut off and resumed (README, B8).
+		await db.merge([{_id: args.accountId, beingDeleted: true, keepData: args.keepData}]);
 		await sleep(1500);
 
 		// A "Removing Account" dashboard: syncState DELETE for the account.
@@ -657,10 +658,11 @@ function createCommands({db, pc, keystore, templates, reloadTemplates, log = con
 			acct.retries = acct.retries ? acct.retries + 1 : 1;
 			return {_id: acct._id, retries: acct.retries};
 		}));
-		// B8: keepData is not known any more here, so a resumed delete wipes the account's data.
+		// With the keepData the delete was asked with. (The old code left it out, so the transports
+		// were told to delete the account's data: README, B8.)
 		await mapReduce(accounts, acct => {
 			log.log('resumeAccountDeletes: resuming delete of account, id=' + acct._id + ', this is retry #' + acct.retries);
-			return pc.call(SELF, 'notifyAccountDeleted', {accountId: acct._id});
+			return pc.call(SELF, 'notifyAccountDeleted', {accountId: acct._id, keepData: acct.keepData});
 		});
 		log.log('resumeAccountDeletes: done');
 	}

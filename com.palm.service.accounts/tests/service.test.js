@@ -373,3 +373,32 @@ test('B7: a failed onCredentialsChanged fails with TRANSPORT_FAILURE and leaves 
 		assert.deepStrictEqual(providers(), before);
 	});
 });
+
+test('B8: a delete resumed by stayRunning keeps its keepData', async () => {
+	await withService({}, async s => {
+		const id = (await create(s)).result._id;
+		await new Promise(res => setTimeout(res, 1200));
+		await s.settle();
+		// A delete cut off after its first step, as deleteAccount leaves the record.
+		await s.db.handle('merge', {objects: [{_id: id, beingDeleted: true, keepData: true}]});
+		assert.deepStrictEqual(await s.ask('stayRunning', {seconds: 1}, {service: 'com.palm.service.accounts'}), {returnValue: true});
+		await new Promise(res => setTimeout(res, 2300));
+		await s.settle();
+		assert.deepStrictEqual(s.callsTo('com.test.mail/onDelete').map(c => c.args.keepData), [true]);
+		assert.strictEqual(s.accounts()[0]._del, true);
+	});
+});
+
+test('B8: deleteAccount keeps keepData on the record', async () => {
+	await withService({}, async s => {
+		const id = (await create(s)).result._id;
+		await new Promise(res => setTimeout(res, 1200));
+		await s.settle();
+		const pending = s.ask('deleteAccount', {accountId: id, keepData: true}, APP);
+		await new Promise(res => setTimeout(res, 300));
+		assert.deepStrictEqual([s.accounts()[0].beingDeleted, s.accounts()[0].keepData], [true, true]);
+		await pending;
+		await new Promise(res => setTimeout(res, 2300));
+		await s.settle();
+	});
+});
