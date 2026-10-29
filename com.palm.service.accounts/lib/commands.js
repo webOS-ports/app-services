@@ -450,8 +450,9 @@ function createCommands({db, pc, keystore, templates, reloadTemplates, log = con
 			// New credentials: onCredentialsChanged to the template and the providers kept enabled.
 			if (newAccount.credentials && !args.suppressNotifications) {
 				const params = {accountId: args.accountId};
-				// B5: diff.add holds ids, so this is a list of undefined and no provider is left out.
-				const addedIds = _.pluck(diff.add, 'id');
+				// The providers just enabled are left out: they get onEnabled. (The old code took
+				// pluck(diff.add, 'id') of these ids, all undefined, and left none out: README, B5.)
+				const addedIds = diff.add;
 				const transports = [];
 				if (template && template.onCredentialsChanged) {
 					transports.push({address: template.onCredentialsChanged, params});
