@@ -1,0 +1,466 @@
+// Copyright (c) 2026 Herman van Hazendonk
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+'use strict';
+
+/*
+	An in-memory db8, as much of it as the reminders service relies on.
+	Copied from com.palm.service.contacts.linker's tests/fakedb.js, written to
+	what db8 was seen to do on the LuneOS VM (2026-10-28), with what this
+	service needs on top (marked [reminders]):
+
+	- the service's own kinds from db/kinds, and com.palm.calendarevent:1
+	  with the calendar app's indexes
+	- = (an array value: any of them), != < <= > >=
+	- a number compares above any string, so _rev > "abc" finds everything
+	- results in index order: by the value the range condition matched, else
+	  by _id; orderBy sorts on its property
+	- pages of at most 500, and a limit above 500 is refused
+	- get keeps the order asked for, leaves out ids it does not have, and
+	  returns deleted records too
+	- del marks _del and keeps the record; incDel, or a condition on _del,
+	  finds it, plain queries do not; del with a query answers the count,
+	  and purge:true drops the records
+	- merge replaces arrays and merges objects; [reminders] merge with a
+	  query merges props into every record found and answers the count
+	- every object in an array gets an _id of its own, as db8 gives one
+	- batch answers { responses: [...] }
+*/
+
+const fs = require('fs');
+const path = require('path');
+
+const KINDS_DIR = path.join(__dirname, '..', 'db', 'kinds');
+const MAX_PAGE = 500;
+
+// [reminders] The calendar app's event kind, with the indexes /etc/palm/db/kinds/com.palm.calendarevent has.
+const EVENT_KIND = {indexes: [
+	{name: 'calendarId', props: [{name: 'calendarId'}, {name: '_rev'}]},
+	{name: 'hasAlarm', props: [{name: 'alarm'}, {name: '_rev'}]},
+	{name: 'revNumber', incDel: true, props: [{name: '_rev'}]},
+	{name: 'parentId', props: [{name: 'parentId'}]}
+]};
+
+function loadKinds() {
+	const kinds = {};
+	for (const file of fs.readdirSync(KINDS_DIR)) {
+		const k = JSON.parse(fs.readFileSync(path.join(KINDS_DIR, file), 'utf8'));
+		kinds[k.id] = {extends: (k.extends || [])[0], indexes: k.indexes || []};
+	}
+	kinds['com.palm.calendarevent:1'] = EVENT_KIND;
+	return kinds;
+}
+
+const KINDS = loadKinds();
+
+const collator = new Intl.Collator('en', {sensitivity: 'base'});
+
+function clone(v) {
+	return v === undefined ? undefined : JSON.parse(JSON.stringify(v));
+}
+
+function isA(kind, wanted) {
+	for (let k = kind; k; k = KINDS[k] && KINDS[k].extends) {
+		if (k === wanted) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Every value a dotted path reaches, through arrays at any level.
+function values(obj, prop) {
+	let level = [obj];
+	for (const part of prop.split('.')) {
+		const next = [];
+		for (const v of level) {
+			if (Array.isArray(v)) {
+				for (const e of v) {
+					if (e && typeof e === 'object' && part in e) {
+						next.push(e[part]);
+					}
+				}
+			} else if (v && typeof v === 'object' && part in v) {
+				next.push(v[part]);
+			}
+		}
+		level = next;
+	}
+	const flat = [];
+	for (const v of level) {
+		if (Array.isArray(v)) {
+			flat.push(...v);
+		} else if (v !== undefined) {
+			flat.push(v);
+		}
+	}
+	return flat;
+}
+
+// The default an index of the kind declares for prop, if any.
+function indexDefault(kind, prop) {
+	for (let k = kind; k; k = KINDS[k] && KINDS[k].extends) {
+		for (const idx of (KINDS[k] && KINDS[k].indexes) || []) {
+			for (const p of idx.props) {
+				if (p.name === prop && 'default' in p) {
+					return {has: true, value: p.default};
+				}
+			}
+		}
+	}
+	return {has: false};
+}
+
+function propValues(record, prop) {
+	const vs = values(record, prop);
+	if (vs.length) {
+		return vs;
+	}
+	const d = indexDefault(record._kind, prop);
+	return d.has ? [d.value] : [];
+}
+
+// db8's order of values of different types: here only that numbers sort above strings matters.
+function rank(v) {
+	if (v === null || v === undefined) {
+		return 0;
+	}
+	if (typeof v === 'boolean') {
+		return 1;
+	}
+	if (typeof v === 'string') {
+		return 2;
+	}
+	if (typeof v === 'number') {
+		return 3;
+	}
+	return 4;
+}
+
+function compare(a, b, collate) {
+	const ra = rank(a), rb = rank(b);
+	if (ra !== rb) {
+		return ra - rb;
+	}
+	if (typeof a === 'string' && collate === 'primary') {
+		return collator.compare(a, b);
+	}
+	if (a === b) {
+		return 0;
+	}
+	return a < b ? -1 : 1;
+}
+
+function test(op, v, val, collate) {
+	switch (op) {
+	case '=':
+		return Array.isArray(val) ? val.some(x => compare(v, x, collate) === 0) : compare(v, val, collate) === 0;
+	case '!=':
+		return compare(v, val, collate) !== 0;
+	case '<':
+		return compare(v, val, collate) < 0;
+	case '<=':
+		return compare(v, val, collate) <= 0;
+	case '>':
+		return compare(v, val, collate) > 0;
+	case '>=':
+		return compare(v, val, collate) >= 0;
+	case '%':
+		if (typeof v !== 'string' || typeof val !== 'string') {
+			return false;
+		}
+		return collate === 'primary' ? collator.compare(v.slice(0, val.length), val) === 0 : v.startsWith(val);
+	default:
+		throw new Error('fakedb: no operator ' + op);
+	}
+}
+
+function deepMerge(target, src) {
+	for (const k of Object.keys(src)) {
+		const s = src[k];
+		if (s && typeof s === 'object' && !Array.isArray(s) && target[k] && typeof target[k] === 'object' &&
+				!Array.isArray(target[k])) {
+			deepMerge(target[k], s);
+		} else {
+			target[k] = clone(s);
+		}
+	}
+	return target;
+}
+
+function dbError(code, text) {
+	const e = new Error(text);
+	e.errorCode = code;
+	e.errorText = text;
+	return e;
+}
+
+function createFakeDb({prefix = 'f'} = {}) {
+	const records = new Map();
+	const calls = {find: 0, get: 0, put: 0, merge: 0, del: 0, batch: 0, reserveIds: 0};
+	const failing = {};
+	let rev = 1000;
+	let idSeq = 0;
+	let subSeq = 0;
+
+	// Ids sort in the order they were made, as db8's do.
+	function newId() {
+		idSeq++;
+		return prefix + String(idSeq).padStart(8, '0');
+	}
+
+	function failNext(method, n = 1, error = null) {
+		failing[method] = {n, error: error || dbError(-3999, 'fakedb: ' + method + ' failed')};
+	}
+
+	function enter(method) {
+		calls[method]++;
+		const f = failing[method];
+		if (f && f.n > 0) {
+			f.n--;
+			throw f.error;
+		}
+	}
+
+	function check(kind) {
+		if (!KINDS[kind]) {
+			throw dbError(-3970, 'kind not registered: \'' + kind + '\'');
+		}
+	}
+
+	// db8 gives every object inside an array an _id of its own.
+	function idArrays(v) {
+		if (Array.isArray(v)) {
+			for (const e of v) {
+				if (e && typeof e === 'object' && !Array.isArray(e)) {
+					if (e._id === undefined) {
+						subSeq++;
+						e._id = subSeq.toString(16);
+					}
+					idArrays(e);
+				}
+			}
+		} else if (v && typeof v === 'object') {
+			for (const k of Object.keys(v)) {
+				idArrays(v[k]);
+			}
+		}
+	}
+
+	function stamp(record) {
+		rev++;
+		record._rev = rev;
+	}
+
+	function store(obj) {
+		if (!obj || !obj._kind) {
+			throw dbError(-3962, 'db: missing _kind');
+		}
+		check(obj._kind);
+		const record = clone(obj);
+		if (!record._id) {
+			record._id = newId();
+		}
+		delete record._del;
+		idArrays(record);
+		stamp(record);
+		records.set(record._id, record);
+		return {id: record._id, rev: record._rev};
+	}
+
+	async function put(objects) {
+		enter('put');
+		return objects.map(store);
+	}
+
+	async function merge(objects) {
+		enter('merge');
+		return objects.map(o => {
+			// An id db8 does not have is stored as new, as a put would.
+			if (!records.has(o._id)) {
+				return store(o);
+			}
+			const r = records.get(o._id);
+			const patch = clone(o);
+			delete patch._rev;
+			delete patch._kind;
+			deepMerge(r, patch);
+			idArrays(r);
+			stamp(r);
+			return {id: r._id, rev: r._rev};
+		});
+	}
+
+	async function get(ids) {
+		enter('get');
+		return ids.map(id => records.get(id)).filter(Boolean).map(clone);
+	}
+
+	function delRecord(id) {
+		const r = records.get(id);
+		r._del = true;
+		stamp(r);
+		return {id, rev: r._rev};
+	}
+
+	function matching(query) {
+		const where = query.where || [];
+		return Array.from(records.values()).filter(r => {
+			// [reminders] a condition on _del sees deleted records, as incDel does.
+			const incDel = query.incDel || where.some(c => c.prop === '_del');
+			if (!isA(r._kind, query.from) || (r._del && !incDel)) {
+				return false;
+			}
+			return where.every(c => propValues(r, c.prop).some(v => test(c.op, v, c.val, c.collate)));
+		});
+	}
+
+	// The key a record sorts on: the lowest value its range or prefix condition matched, else
+	// none (then by _id); a query on _rev sorts by _rev.
+	function sortKey(record, query) {
+		const where = query.where || [];
+		const range = where.find(c => c.op !== '=');
+		const prop = query.orderBy || (range && range.prop);
+		if (!prop) {
+			return undefined;
+		}
+		const vs = propValues(record, prop).filter(v => !range || range.prop !== prop ||
+			test(range.op, v, range.val, range.collate));
+		vs.sort((a, b) => compare(a, b, range && range.collate));
+		return vs[0];
+	}
+
+	function findPage(query) {
+		check(query.from);
+		if (query.limit !== undefined && (query.limit < 0 || query.limit > MAX_PAGE)) {
+			throw dbError(-986, 'invalid parameters: value out of range for property \'limit\' for property \'query\'');
+		}
+		const range = (query.where || []).find(c => c.op !== '=');
+		const list = matching(query).map(r => ({r, key: sortKey(r, query)}));
+		list.sort((a, b) => {
+			const c = compare(a.key, b.key, range && range.collate);
+			if (c) {
+				return query.desc ? -c : c;
+			}
+			return a.r._id < b.r._id ? -1 : a.r._id > b.r._id ? 1 : 0;
+		});
+		const start = query.page ? Number(query.page) : 0;
+		const limit = query.limit || MAX_PAGE;
+		// select: only those properties, as db8 gives them.
+		const pick = r => (query.select ? Object.fromEntries(query.select.filter(k => k in r).map(k => [k, r[k]])) : r);
+		const slice = list.slice(start, start + limit).map(e => clone(pick(e.r)));
+		const next = start + limit < list.length ? String(start + limit) : undefined;
+		return {results: slice, next};
+	}
+
+	async function find(query) {
+		enter('find');
+		return findPage(query);
+	}
+
+	async function delQuery(query, purge) {
+		enter('del');
+		const list = matching(query);
+		list.forEach(r => (purge ? records.delete(r._id) : delRecord(r._id)));
+		return {count: list.length};
+	}
+
+	// [reminders] merge {query, props}
+	async function mergeQuery(query, props) {
+		enter('merge');
+		const list = matching(query);
+		for (const r of list) {
+			const patch = clone(props);
+			delete patch._rev;
+			delete patch._kind;
+			delete patch._id;
+			deepMerge(r, patch);
+			idArrays(r);
+			stamp(r);
+		}
+		return {count: list.length};
+	}
+
+	async function del(ids) {
+		enter('del');
+		return ids.filter(id => records.has(id)).map(delRecord);
+	}
+
+	async function reserveIds(count) {
+		enter('reserveIds');
+		const ids = [];
+		for (let i = 0; i < count; i++) {
+			ids.push(newId());
+		}
+		return ids;
+	}
+
+	async function one(method, args) {
+		switch (method) {
+		case 'find': {
+			const r = await find(args.query);
+			return Object.assign({returnValue: true, results: r.results}, r.next ? {next: r.next} : {});
+		}
+		case 'get':
+			return {returnValue: true, results: await get(args.ids)};
+		case 'put':
+			return {returnValue: true, results: await put(args.objects)};
+		case 'merge':
+			if (args.query) {
+				return Object.assign({returnValue: true}, await mergeQuery(args.query, args.props || {}));
+			}
+			return {returnValue: true, results: await merge(args.objects)};
+		case 'del':
+			if (args.query) {
+				return Object.assign({returnValue: true}, await delQuery(args.query, args.purge === true));
+			}
+			return {returnValue: true, results: await del(args.ids)};
+		case 'reserveIds':
+			return {returnValue: true, ids: await reserveIds(args.count)};
+		case 'batch': {
+			// [reminders] one transaction: an operation that fails fails the batch and undoes the others.
+			enter('batch');
+			const saved = new Map(Array.from(records, ([k, v]) => [k, clone(v)]));
+			const savedRev = rev;
+			const responses = [];
+			for (const op of args.operations) {
+				const r = await handle(op.method, op.params);
+				if (r.returnValue === false) {
+					records.clear();
+					saved.forEach((v, k) => records.set(k, v));
+					rev = savedRev;
+					throw dbError(r.errorCode, r.errorText);
+				}
+				responses.push(r);
+			}
+			return {returnValue: true, responses};
+		}
+		default:
+			return {returnValue: false, errorCode: -1, errorText: 'Unknown method "' + method + '" for category "/"'};
+		}
+	}
+
+	// The same database behind luna://com.palm.db/<method>, for a stand-in palmbus.
+	async function handle(method, args) {
+		try {
+			return await one(method, args || {});
+		} catch (e) {
+			return {returnValue: false, errorCode: e.errorCode || -1, errorText: e.errorText || e.message};
+		}
+	}
+
+	// Direct access for tests: every record of a kind (subkinds included).
+	function all(kind, {deleted = false} = {}) {
+		return Array.from(records.values()).filter(r => isA(r._kind, kind) && (deleted || !r._del)).map(clone);
+	}
+
+	function resetCalls() {
+		for (const k of Object.keys(calls)) {
+			calls[k] = 0;
+		}
+	}
+
+	return {put, merge, mergeQuery, get, del, delQuery, find, reserveIds, handle, all, calls, resetCalls, failNext, records};
+}
+
+module.exports = {createFakeDb, KINDS, MAX_PAGE};

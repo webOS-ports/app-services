@@ -1,0 +1,10 @@
+{
+	"name": "com.palm.service.calendar.reminders",
+	"version": "1.0.0",
+	"description": "Calendar reminders: schedules, shows and closes the calendar app's event reminders",
+	"main": "service.js",
+	"private": true,
+	"engines": { "node": ">=22" },
+	"scripts": { "test": "node --test --test-force-exit tests/*.test.js" },
+	"license": "GPL-3.0-or-later"
+}
