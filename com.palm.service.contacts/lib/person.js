@@ -13,8 +13,8 @@
 	defaultsChanged, points, pointsDirty, contactIds, contacts }. points
 	holds its phone numbers, emails and IMs: the stored entries, completed
 	in place with their defaults (records.js), as the framework's "extended"
-	entries were. Their favoriteData, when they have none, is the one object
-	all such entries share, as the framework's default for it was.
+	entries were. Their favoriteData, when they have none, is a new {} of
+	their own (C4: the framework gave them all one shared object).
 
 	A saved person is merged with only what changed, as the framework merged
 	its "dirty" fields: its favourite flag when it was set, and its phone
@@ -72,11 +72,9 @@ function normalizeLower(v) {
 }
 
 /*
-	createPersons({db, call, model, linkHash, sharedFavoriteData}):
-	sharedFavoriteData is the favoriteData of every point that has none of
-	its own; it lasts as long as the service does, as the framework's did.
+	createPersons({db, model, linkHash}).
 */
-function createPersons({db, model, linkHash, sharedFavoriteData = {}}) {
+function createPersons({db, model, linkHash}) {
 	const normalize = {
 		phoneNumbers: v => model.normalizePhoneNumber(v),
 		emails: normalizeLower,
@@ -87,7 +85,7 @@ function createPersons({db, model, linkHash, sharedFavoriteData = {}}) {
 	function point(raw, field, kind) {
 		const e = entry(raw, kind);
 		if (e.favoriteData === undefined) {
-			e.favoriteData = sharedFavoriteData;
+			e.favoriteData = {};
 		}
 		if (e.normalizedValue === undefined) {
 			e.normalizedValue = '';

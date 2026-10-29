@@ -221,8 +221,25 @@ describe('com.palm.service.contacts', {skip: NO_FRAMEWORKS}, () => {
 			type: 'type_mobile', contactPointType: 'contact_point_type_phoneNumber', listIndex: 3, auxData: {a: 1}}}), true);
 		const p = env.db.all(PERSON)[0];
 		assert.equal(p.phoneNumbers[0].value, '4085551234');
-		// On a number with no favoriteData of its own the default is lost (README.md).
-		assert.deepEqual(p.phoneNumbers[0].favoriteData, {});
+		assert.deepEqual(p.phoneNumbers[0].favoriteData, {'com.palm.app.phone': {listIndex: 3, auxData: {a: 1}}});
+		assert.deepEqual(p.phoneNumbers[1].favoriteData, {});
+		env.stop();
+	});
+
+	it('a default set on one point is on that point alone, of that person alone (C4)', async () => {
+		const env = await boot();
+		await env.db.put([person('p1', {favorite: true, phoneNumbers: [{value: '111', type: 'type_home'},
+			{value: '4085551234', type: 'type_mobile'}], emails: [{value: 'a@b.com', type: 'type_home'}]}),
+		person('p2', {favorite: true, phoneNumbers: [{value: '222', type: 'type_home'}]})]);
+		assert.equal(await env.ask('setFavoriteDefault', {personId: 'p1', defaultData: {value: '4085551234',
+			type: 'type_mobile', contactPointType: 'contact_point_type_phoneNumber', listIndex: 0}}), true);
+		assert.equal(await env.ask('setFavoriteDefault', {personId: 'p2', defaultData: {value: 'x', type: 'type_home',
+			contactPointType: 'contact_point_type_phoneNumber', listIndex: 0}}).then(r => r.returnValue), false);
+		await env.ask('favoritePerson', {personId: 'p2'});
+		const [p1, p2] = env.db.all(PERSON);
+		assert.deepEqual(p1.phoneNumbers.map(n => n.favoriteData), [{'com.palm.app.phone': {listIndex: 0}}, {}]);
+		assert.deepEqual(p1.emails[0].favoriteData, {});
+		assert.deepEqual(p2.phoneNumbers[0].favoriteData, {});
 		env.stop();
 	});
 
