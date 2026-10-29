@@ -76,7 +76,13 @@ These things deliberately differ from the old service:
   keeps its record, and the order of a merged person's `contactIds`. On
   the VM, two runs of the old service over the same 200 contacts once
   ended with 141 and 142 persons. The order used here is the one replies
-  take when they come back in the order they were asked for.
+  take when they come back in the order they were asked for. The manual
+  links are read with them, and added after them.
+- A run reads the contacts app's list sort order once, when it starts, for
+  every person it writes. The old service did so for a new person, and
+  read it again for each person it kept or merged into, so a sort order
+  changed during a run reached some of the persons written after it; here
+  it reaches them all on the next run.
 - When `linkerWatch` cannot be completed, it is created again from the
   revision the run reached.
 - activitymanager's callbacks adopt the activity with `wait: true`. A run
