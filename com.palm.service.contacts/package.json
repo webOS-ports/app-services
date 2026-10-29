@@ -1,0 +1,10 @@
+{
+	"name": "com.palm.service.contacts",
+	"version": "1.0.0",
+	"description": "Contacts service: vCards, favourites, contact photos, sort keys and phone-number lookups",
+	"main": "service.js",
+	"private": true,
+	"engines": { "node": ">=22" },
+	"scripts": { "test": "node --test tests/*.test.js" },
+	"license": "GPL-3.0-or-later"
+}
