@@ -140,13 +140,13 @@ describe('com.palm.service.contacts', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
-	it('exports one person as a 3.0 vCard whatever version is asked for', async () => {
+	it('exports one person as a 3.0 vCard', async () => {
 		const env = await boot();
 		const dir = tmpDir();
 		await env.db.put([person('p1', {phoneNumbers: [{value: '(408) 555-1234', type: 'type_mobile'}],
 			emails: [{value: 'a@b.com', type: 'type_work'}], urls: [{value: 'http://w', type: 'type_work'}]})]);
 		const file = path.join(dir, 'one.vcf');
-		assert.deepEqual(await env.ask('vCardExportOne', {filePath: file, personId: 'p1', vCardVersion: '2.1'}),
+		assert.deepEqual(await env.ask('vCardExportOne', {filePath: file, personId: 'p1'}),
 			{success: true, filePath: file, returnValue: true});
 		const text = fs.readFileSync(file, 'utf8');
 		assert.match(text, /^BEGIN:VCARD\r\nVERSION:3\.0\r\nN:Lee;Ann;;;\r\nFN:Ann Lee\r\n/);
@@ -155,6 +155,30 @@ describe('com.palm.service.contacts', {skip: NO_FRAMEWORKS}, () => {
 		// The URL labels are off by one: a work URL says HOME (README.md).
 		assert.match(text, /URL;TYPE=HOME:http:\/\/w\r\n/);
 		assert.match(text, /END:VCARD\r\n\r\n$/);
+		env.stop();
+	});
+
+	it('exports a 2.1 vCard when asked, with CHARSET=UTF-8 unless another charset is asked for (C6)', async () => {
+		const env = await boot();
+		const dir = tmpDir();
+		await env.db.put([person('p1', {phoneNumbers: [{value: '(408) 555-1234', type: 'type_mobile'}],
+			emails: [{value: 'a@b.com', type: 'type_work'}], addresses: [{streetAddress: '1 Main', type: 'type_home'}]})]);
+		const one = path.join(dir, 'one.vcf');
+		assert.equal((await env.ask('vCardExportOne', {filePath: one, personId: 'p1', vCardVersion: '2.1'})).success, true);
+		const all = path.join(dir, 'all.vcf');
+		assert.equal((await env.ask('vCardExportAll', {filePath: all, vCardVersion: '2.1'})).success, true);
+		for (const text of [fs.readFileSync(one, 'utf8'), fs.readFileSync(all, 'utf8')]) {
+			assert.match(text, /^BEGIN:VCARD\r\nVERSION:2\.1\r\nN;CHARSET=UTF-8:Lee;Ann;;;\r\nFN;CHARSET=UTF-8:Ann Lee\r\n/);
+			assert.match(text, /TEL;CHARSET=UTF-8;CELL;VOICE:\(408\) 555-1234\r\n/);
+			assert.match(text, /EMAIL;WORK;INTERNET:a@b\.com\r\n/);
+			assert.match(text, /ADR;HOME:;;1 Main;;;;\r\n/);
+		}
+		const ascii = path.join(dir, 'ascii.vcf');
+		await env.ask('vCardExportOne', {filePath: ascii, personId: 'p1', vCardVersion: '2.1', charset: 'US-ASCII'});
+		assert.match(fs.readFileSync(ascii, 'utf8'), /VERSION:2\.1\r\nN:Lee;Ann;;;\r\nFN:Ann Lee\r\nTEL;CELL;VOICE:/);
+		const v3 = path.join(dir, 'v3.vcf');
+		await env.ask('vCardExportOne', {filePath: v3, personId: 'p1', vCardVersion: '3.0', charset: 'UTF-8'});
+		assert.match(fs.readFileSync(v3, 'utf8'), /VERSION:3\.0\r\nN:Lee;Ann;;;\r\nFN:Ann Lee\r\nTEL;TYPE=CELL,VOICE:/);
 		env.stop();
 	});
 

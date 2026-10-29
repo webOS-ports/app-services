@@ -13,8 +13,8 @@
 	countVCardContacts      {filePath: "file://..."} -> {count}
 	readVCard               {filePath} -> {contacts}
 	importVCard             {filePath}: the cards saved to the default account
-	vCardExportOne          {filePath, personId, onlyPhoneNumbers, useFileCache}
-	vCardExportAll          {filePath, onlyPhoneNumbers}
+	vCardExportOne          {filePath, personId, vCardVersion, charset, onlyPhoneNumbers, useFileCache}
+	vCardExportAll          {filePath, vCardVersion, charset, onlyPhoneNumbers}
 	favoritePerson          {personId, defaultData}
 	setFavoriteDefault      {personId, defaultData: {value, contactPointType, type, listIndex, auxData, appId}}
 	unfavoritePerson        {personId}
@@ -260,6 +260,11 @@ function createCommands({db, call, persons, photos, prefs, model, G, log = conso
 		return raw;
 	}
 
+	// The version and charset asked for, which the exporter now reads (C6).
+	function cardFormat(params) {
+		return {version: params.vCardVersion || undefined, charset: params.charset || undefined};
+	}
+
 	async function vCardExportOne(params) {
 		const onlyPhoneNumbers = params.onlyPhoneNumbers || false;
 		const filePath = exportPath(params);
@@ -267,7 +272,7 @@ function createCommands({db, call, persons, photos, prefs, model, G, log = conso
 		const useFileCache = params.useFileCache || false;
 		require_(personId, 'personId passed to export was not truthy. export requires a valid personId to export');
 		const raw = await personAndContacts(personId);
-		const text = vcard.fileText(exporter.vcard(raw, onlyPhoneNumbers));
+		const text = vcard.fileText(exporter.vcard(raw, onlyPhoneNumbers, cardFormat(params)));
 		let path = filePath;
 		let cache = null;
 		if (useFileCache) {
@@ -295,7 +300,7 @@ function createCommands({db, call, persons, photos, prefs, model, G, log = conso
 			const page = await db.findPage(Object.assign({}, query));
 			try {
 				for (const raw of page.results) {
-					text += vcard.fileText(exporter.vcard(raw, onlyPhoneNumbers));
+					text += vcard.fileText(exporter.vcard(raw, onlyPhoneNumbers, cardFormat(params)));
 				}
 			} catch (e) {
 				fs.writeFileSync(filePath, text, 'utf8');
