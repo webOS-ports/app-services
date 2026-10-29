@@ -65,8 +65,6 @@ them by these numbers):
   number) that is not a prefix of the key the person stores it under
   (phonenumberlib's). Ordinary 10-digit US numbers and NL mobile numbers
   never find a match.
-- Q7.17: a person keeps IM entries with an empty value, so a contact with an
-  empty IM links to every person that has one.
 - The manual unlink check reuses one variable for the contact ids it walks,
   so it can read past the end of a person's ids and fail the contact with
   a `TypeError`.

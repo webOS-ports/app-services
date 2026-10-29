@@ -20,8 +20,6 @@
 	As the old service did, quirks included:
 	- the phone number queries all share one condition, so every one of them
 	  asks for the last mobile number's value (README: Q7.14)
-	- an email or IM with no value asks for persons with an empty one, and
-	  finds every such person (Q7.17)
 */
 
 const {DEFAULTS, entries, contactName, normalizeLower} = require('./model');
@@ -193,11 +191,18 @@ function createRankers({db, persons, model, G, clb, linkHash}) {
 		}
 	}
 
+	/*
+		An email or IM with no value is not looked up. A person keeps IM
+		entries with an empty value, so the old service, which looked it up,
+		linked a contact with an empty IM to every person that had one
+		(README: Q7.17). A person has no empty email, so for emails that
+		query found nothing.
+	*/
 	function singleProperty(prop, field, defaults, similarity) {
 		return async (person, contact, weights) => {
 			const list = (person ? person.rec[field] : []).concat(entries(contact, field, defaults));
-			const queries = list.map(e => ({method: 'find', params: {query: {from: KIND,
-				where: [{prop, op: '=', val: normalizeLower(e.value)}]}}}));
+			const queries = list.map(e => normalizeLower(e.value)).filter(val => val !== '').map(val => ({method: 'find',
+				params: {query: {from: KIND, where: [{prop, op: '=', val}]}}}));
 			if (!queries.length) {
 				return;
 			}
