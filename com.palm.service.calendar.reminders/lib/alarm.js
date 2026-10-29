@@ -33,47 +33,32 @@ function findDisplayAlarm(eventAlarm) {
 }
 
 /*
-	The duration taken apart as the old code did, with one regular expression:
-	P, then weeks or days (only the last of them counts), T, hours, minutes,
-	seconds, each of one to three digits. A part of four digits ends the match
-	there, so "-PT1440M" is no offset at all (README.md). A leading "-" makes
-	every part negative.
+	The duration taken apart as the old code read it (P, weeks and days, T,
+	hours, minutes, seconds, a leading "-" making every part negative, and
+	no anchoring at either end), but with any number of digits per part, and
+	weeks and days added up. The old expression took one to three digits, so
+	"-PT1440M" was no offset at all, and kept only the last of W and D, so
+	"-P1W2D" was two days (README.md, bug 7).
 */
 function parseDuration(alarmString, startTime) {
-	let weeks = 0, days = 0, hours = 0, minutes = 0, seconds = 0;
+	let weeks = 0, days = 0;
 	const negative = alarmString[0] === '-' ? -1 : 1;
-	const tokens = /P([0-9]{1,3}[WD])*T*([0-9]{1,3}H)*([0-9]{1,3}M)*([0-9]{1,3}S)*/.exec(alarmString);
+	const tokens = /P((?:[0-9]+[WD])*)T*(?:([0-9]+)H)?(?:([0-9]+)M)?(?:([0-9]+)S)?/.exec(alarmString);
 	if (!tokens) {
 		return 0;
 	}
-	// tokens[0], the whole match, goes through this too: its number is NaN, and the part after it puts it right.
-	for (let i = 0; i < tokens.length; i++) {
-		const token = tokens[i];
-		if (token === undefined) {
-			continue;
-		}
-		const end = token.length - 1;
-		const number = parseInt(token.substr(0, end), 10);
-		switch (token[end]) {
-		case 'W':
-			weeks = number * negative;
-			break;
-		case 'D':
-			days = number * negative;
-			break;
-		case 'H':
-			hours = number * negative;
-			break;
-		case 'M':
-			minutes = number * negative;
-			break;
-		case 'S':
-			seconds = number * negative;
-			break;
+	const dateParts = /([0-9]+)([WD])/g;
+	let part;
+	while ((part = dateParts.exec(tokens[1]))) {
+		if (part[2] === 'W') {
+			weeks += parseInt(part[1], 10) * negative;
+		} else {
+			days += parseInt(part[1], 10) * negative;
 		}
 	}
+	const n = t => (t === undefined ? 0 : parseInt(t, 10) * negative);
 	const date = new Date(startTime);
-	D.add(date, {seconds, minutes, hours, days});
+	D.add(date, {seconds: n(tokens[4]), minutes: n(tokens[3]), hours: n(tokens[2]), days});
 	D.addWeeks(date, weeks);
 	return date.getTime();
 }
