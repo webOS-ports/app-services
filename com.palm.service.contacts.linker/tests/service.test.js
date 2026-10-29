@@ -256,6 +256,48 @@ describe('the linker', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
+	it('setupWatch creates linkerWatch again, from the revision kept in db8 or from 0', async () => {
+		// The old service called a function that had been renamed (README: Q7.4).
+		const env = await boot();
+		assert.equal(await env.ask('setupWatch'), true);
+		let create = env.calls.filter(c => c.method === 'create').pop();
+		assert.equal(create.args.activity.name, 'linkerWatch');
+		assert.equal(create.args.replace, true);
+		assert.equal(create.args.activity.callback.params.revChangedStart, 0);
+		await env.db.put([{_kind: 'com.palm.linker.rev:1', revisionNumber: 12},
+			{_kind: 'com.palm.linker.rev:1', revisionNumber: 40}]);
+		assert.equal(await env.ask('setupWatch'), true);
+		create = env.calls.filter(c => c.method === 'create').pop();
+		assert.equal(create.args.activity.callback.params.revChangedStart, 40);
+		assert.equal(create.args.activity.trigger.params.query.where[0].val, 40);
+		env.stop();
+	});
+
+	it('performedUnlink and the link lookups work over the bus, by id and by object', async () => {
+		// The old service wanted the framework's objects, and with an id never answered (Q7.8, Q7.9).
+		const env = await boot();
+		const [a, b] = await env.putContacts([name('Ann', 'Lee'), name('Bob', 'Kay')]);
+		await env.ask('forceAutolink');
+		assert.equal(await env.ask('performedManualLink', {person1Contacts: [a._id], person2Contacts: [b._id]}), true);
+		let r = await env.ask('getManualLinks', {contactOrContactId: a._id});
+		assert.equal(r.returnValue, true);
+		assert.equal(r.results.length, 1);
+		r = await env.ask('getManualLinks', {contactOrContactId: env.db.records.get(b._id)});
+		assert.equal(r.results.length, 1);
+		r = await env.ask('performedUnlink', {person: env.personOf(a._id), contactId: b._id});
+		assert.deepEqual(r, {msg: 'Done in clb', returnValue: true});
+		assert.equal((await env.ask('getManualLinks', {contactOrContactId: a._id})).results.length, 0);
+		assert.equal((await env.ask('getUnlinkLinks', {contactOrContactId: b._id})).results.length, 1);
+		r = await env.ask('performedUnlink', {person: env.personOf(a._id)._id, contactId: b._id});
+		assert.equal(r.returnValue, true);
+		for (const nothing of ['nope', {}]) {
+			r = await env.ask('getUnlinkLinks', {contactOrContactId: nothing});
+			assert.equal(r.errorText, 'MojoService: no errorCode supplied ContactLinkBackup.getUnlinkLinks: ' +
+				'failed to get the contact to get links from');
+		}
+		env.stop();
+	});
+
 	it('forceAutolink links every contact, not only the first page of 500', async () => {
 		const env = await boot();
 		const list = [name('Ann', 'Lee')];

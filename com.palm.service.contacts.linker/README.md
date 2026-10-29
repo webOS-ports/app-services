@@ -46,16 +46,23 @@ The first version reproduces the old service's linking decisions exactly,
 including its bugs. It was checked by an A/B test: the old service and this
 one ran on the same seeded contacts, edits, deletes, manual links and
 unlinks, saves and watch callbacks, and every step's reply and db8 contents
-were compared. The bugs are then mended one commit at a time, each with its
-own test. These are the ones that are still there (the code and tests refer to
-them by these numbers):
+were compared. The bugs were then mended one commit at a time, each with
+its own test; the code, tests and commits refer to some by these numbers:
 
-- Q7.4: `setupWatch` always fails: it calls a function that was renamed.
-- Q7.8: `performedUnlink` over the bus always fails: it wants the
-  framework's person object.
-- Q7.9: `getManualLinks` / `getUnlinkLinks` over the bus never work: with
-  an id they do not answer until the command times out (504), and with a
-  contact object they want the framework's contact.
+- Q7.4: `setupWatch` failed: it called a function that had been renamed.
+- Q7.5: `saveNewPersonAndContacts` gave a contact with an `_id` right after
+  another a new id.
+- Q7.8: `performedUnlink` over the bus wanted the framework's person object.
+- Q7.9: `getManualLinks` / `getUnlinkLinks` over the bus never answered with
+  an id, and wanted the framework's contact.
+- Q7.12: `forceAutolink` linked only the first 500 contacts.
+- Q7.14: a contact's phone lookups all asked for its last mobile number.
+- Q7.15: a mobile number was looked up by a key that is no prefix of the
+  one stored, so 10-digit US and NL mobile numbers never matched.
+- Q7.17: a contact with an empty IM was linked to every person with one.
+- The manual unlink check read past the end of a person's contact ids and
+  failed the contact with a `TypeError`.
+- With several speed-dial backups, each restored the first one's numbers.
 
 These things deliberately differ from the old service:
 
