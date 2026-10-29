@@ -202,6 +202,17 @@ describe('the linker', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
+	it('does not link contacts on an empty IM (README: Q7.17)', async () => {
+		const env = await boot();
+		const im = {ims: [{value: '', type: 'type_aim'}]};
+		await env.putContacts([Object.assign(name('Ann', 'Lee'), im), Object.assign(name('Bob', 'Kay'), im),
+			Object.assign(name('Cy', 'Bos'), {ims: [{value: 'cy1', type: 'type_aim'}]}), name('Di', 'Vos'),
+			{ims: [{value: 'CY1 ', type: 'type_gtalk'}]}]);
+		await env.ask('forceAutolink');
+		assert.equal(env.persons().length, 4);
+		env.stop();
+	});
+
 	it('forceAutolink links every contact, not only the first page of 500', async () => {
 		const env = await boot();
 		const list = [name('Ann', 'Lee')];
