@@ -63,8 +63,10 @@ function createCommands({db, call, rem, log = console}) {
 			lastRevNumber = eventsLength ? events[eventsLength - 1]._rev : 0;
 			scan = {returnValue: result.returnValue, results: events, lastRevNumber};
 		} catch (e) {
+			// Bug 2: the old handler read the error again and never answered. As it meant to: no events this time,
+			// and a status that has the next run start over.
 			log.error('rmdrsvc: onInit: event query failed: ' + ((e && e.message) || e));
-			return rem.hang();
+			scan = {returnValue: false, results: [], lastRevNumber: 0, status: 'FAIL'};
 		}
 		const times = await rem.reminderTimes(scan);
 		let saved;

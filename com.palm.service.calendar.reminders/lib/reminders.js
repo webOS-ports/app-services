@@ -15,13 +15,11 @@
 	- dbWatch: the activity that calls onDBChanged when an event changes
 	- the status record: the last event revision seen, and the activities' ids
 
-	Each step answers and fails where the old one did. Three things in that
+	Each step answers and fails where the old one did. Two things in that
 	are not what the comments in the old code say, and are kept until the
 	commits after this one (README.md): a db8 or activitymanager call that
 	fails is an exception that ends the command, never the returnValue:false
-	the old code tested for; the error handlers of the two reminder queries
-	read the error again, so a failed query left the command hanging until
-	its timeout (hang() here); and the status of a step is written with a
+	the old code tested for; and the status of a step is written with a
 	db8 merge nobody waits for (later() here), as the old code did.
 */
 
@@ -33,9 +31,6 @@ const EVENTS = 'com.palm.calendarevent:1';
 const AM = 'palm://com.palm.activitymanager/';
 const SELF = 'palm://com.palm.service.calendar.reminders/';
 const STATUS_QUERY = {from: STATUS};
-
-// A step the old code never finished: the command waits for its timeout.
-const hang = () => new Promise(() => {});
 
 // The current time, whole seconds, as the old code took it for the reminder queries.
 function nowSeconds() {
@@ -267,8 +262,9 @@ function createReminders({db, call, events, log = console}) {
 		try {
 			found = await db.find(query);
 		} catch (e) {
+			// Bug 2: the old handler read the error again and never answered. As it meant to: the wake stays as it is.
 			log.error('rmdrsvc: findNextWakeTimeSubroutine: reminder query failed: ' + ((e && e.message) || e));
-			return hang();
+			return {returnValue: false, status: 'dbError'};
 		}
 		const results = found.results;
 		const resultsLength = results && results.length;
@@ -298,7 +294,7 @@ function createReminders({db, call, events, log = console}) {
 				orderBy: 'autoCloseTime', limit: 1});
 		} catch (e) {
 			log.error('rmdrsvc: findNextAutoCloseTimeSubroutine: reminder query failed: ' + ((e && e.message) || e));
-			return hang();
+			return {returnValue: false, status: 'dbError'};
 		}
 		return scheduleActivity(found.results, AUTOCLOSE);
 	}
@@ -418,9 +414,9 @@ function createReminders({db, call, events, log = console}) {
 
 	return {
 		reminderTimes, nextWake, nextAutoClose, dbWatch, prepareForTakeoff, setStatusAndRev, saveLastRevNumber,
-		launchApp, markFailed, later, hang, nowSeconds,
+		launchApp, markFailed, later, nowSeconds,
 		REMINDERS, STATUS, EVENTS, STATUS_QUERY, SELF
 	};
 }
 
-module.exports = {createReminders, hang, nowSeconds};
+module.exports = {createReminders, nowSeconds};

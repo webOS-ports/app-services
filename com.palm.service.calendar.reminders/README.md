@@ -78,9 +78,6 @@ bugs are then mended one commit at a time, each with its own test. These
 are the ones that are still there (the code and tests refer to them by
 these numbers):
 
-2. The error handlers of the two reminder queries (next wake, next
-   autoclose) and of onInit's event query read the error again, so a failed
-   query leaves the command without an answer until it times out.
 3. A start over (status `FAIL`) looks for the activity ids on the query's
    results array instead of on its record, so it never cancels them.
    Harmless: they are created again with `replace`, which takes their
@@ -129,6 +126,13 @@ Mended since the first version:
    failed the same way, every time. Now one that cannot be completed is
    created again under its name (`replace`), or cancelled when there is no
    reminder left to wait for; the same for the db watch.
+2. The error handlers of the two reminder queries (next wake, next
+   autoclose) and of onInit's event query read the error again, so a
+   failed query left the command without an answer until it timed out, and
+   what came after it undone. Now, as their comments meant: a failed
+   reminder query leaves the activity as it is (status `dbError`), and a
+   failed event query in onInit goes on with no events and a `FAIL` status,
+   so the next run starts over.
 
 These things deliberately differ from the old service:
 
