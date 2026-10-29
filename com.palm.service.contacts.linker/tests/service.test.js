@@ -48,15 +48,40 @@ describe('the linker', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
-	it('does not link on a 10-digit mobile number, not even the same one (README: Q7.15)', async () => {
-		// The old service looked a mobile number up by a key (Globalization's subscriber number)
-		// that is not a prefix of the one the person stores it under (phonenumberlib's), for a
-		// 10-digit US number. Kept until the commit that mends it.
+	it('links on a 10-digit mobile number whatever its format, and on an NL mobile number', async () => {
+		// The old service never found these (README: Q7.15).
 		const env = await boot();
-		const [a, b] = await env.putContacts([{phoneNumbers: [{value: '2125551111', type: 'type_mobile'}]},
-			{phoneNumbers: [{value: '2125551111', type: 'type_mobile'}]}]);
+		const mobile = value => ({phoneNumbers: [{value, type: 'type_mobile'}]});
+		const [a, b, c, d, e, f] = await env.putContacts([mobile('2125551111'), mobile('(212) 555-1111'),
+			mobile('+1 212 555 1111'), mobile('+31 6 12345678'), mobile('+31612345678'), mobile('2125552222')]);
+		await env.ask('forceAutolink');
+		assert.deepEqual(env.personOf(a._id).contactIds.slice().sort(), [a._id, b._id, c._id].sort());
+		assert.deepEqual(env.personOf(d._id).contactIds.slice().sort(), [d._id, e._id].sort());
+		assert.deepEqual(env.personOf(f._id).contactIds, [f._id]);
+		env.stop();
+	});
+
+	it('looks up every mobile number of a contact, not only its last (README: Q7.14)', async () => {
+		const env = await boot();
+		const [a, b] = await env.putContacts([{phoneNumbers: [{value: '555-1234', type: 'type_mobile'}]},
+			{phoneNumbers: [{value: '555-1234', type: 'type_mobile'}, {value: '555-9876', type: 'type_mobile'}]}]);
+		await env.ask('forceAutolink');
+		assert.equal(env.personOf(a._id)._id, env.personOf(b._id)._id);
+		env.stop();
+	});
+
+	it('does not link on a number that is not a mobile, or that has no digits', async () => {
+		const env = await boot();
+		const [a, b, c, d] = await env.putContacts([{phoneNumbers: [{value: '2125551111', type: 'type_home'}]},
+			{phoneNumbers: [{value: '2125551111', type: 'type_home'}]},
+			{phoneNumbers: [{value: 'abc', type: 'type_mobile'}]}, {phoneNumbers: [{value: 'abc', type: 'type_mobile'}]}]);
+		env.calls.length = 0;
 		await env.ask('forceAutolink');
 		assert.notEqual(env.personOf(a._id)._id, env.personOf(b._id)._id);
+		assert.notEqual(env.personOf(c._id)._id, env.personOf(d._id)._id);
+		const lookups = env.calls.filter(x => x.method === 'batch').flatMap(x => x.args.operations)
+			.filter(o => o.params.query.where.some(w => w.prop === 'phoneNumbers.normalizedValue'));
+		assert.deepEqual(lookups, []);
 		env.stop();
 	});
 
