@@ -53,6 +53,18 @@ function createPhotos({call, db, log = console, now = Date.now}) {
 		}
 	}
 
+	/*
+		The image service's scale for a crop: the crop's width over the
+		width the app suggested, or, for a crop with no suggestedXsize, its
+		own scale (refetchPhoto's default crop, C10).
+	*/
+	function scaleOf(cropInfo, dims) {
+		if (cropInfo.suggestedXsize === undefined && typeof cropInfo.scale === 'number') {
+			return cropInfo.scale;
+		}
+		return dims.width / cropInfo.suggestedXsize;
+	}
+
 	// ContactPhoto.cropAndGetPath: a cropped copy in the file cache.
 	async function cropToCache(fromPath, cropInfo, type) {
 		const dims = type === 'type_big' ? BIG_CACHED : LIST;
@@ -70,7 +82,7 @@ function createPhotos({call, db, log = console, now = Date.now}) {
 			} else {
 				params.focusX = cropInfo.focusX;
 				params.focusY = cropInfo.focusY;
-				params.scale = dims.width / cropInfo.suggestedXsize;
+				params.scale = scaleOf(cropInfo, dims);
 				params.cropW = dims.width;
 				params.cropH = dims.height;
 				await call(IMAGE + '/convert', params);
@@ -87,7 +99,7 @@ function createPhotos({call, db, log = console, now = Date.now}) {
 		fromPath.split('/');
 		const toPath = MEDIA_DIR + now() + '.' + FILETYPE;
 		await call(IMAGE + '/convert', {src: fromPath, dest: toPath, destType: FILETYPE, focusX: cropInfo.focusX,
-			focusY: cropInfo.focusY, scale: dims.width / cropInfo.suggestedXsize, cropW: dims.width, cropH: dims.height});
+			focusY: cropInfo.focusY, scale: scaleOf(cropInfo, dims), cropW: dims.width, cropH: dims.height});
 		return toPath;
 	}
 
