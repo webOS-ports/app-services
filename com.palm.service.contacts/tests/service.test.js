@@ -203,13 +203,21 @@ describe('com.palm.service.contacts', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
-	it('favoritePerson with defaultData refuses a person that is not a favourite yet', async () => {
+	it('favoritePerson with defaultData makes a favourite with that default, in one save (C5)', async () => {
 		const env = await boot();
-		await env.db.put([person('p1', {phoneNumbers: [{value: '4085551234', type: 'type_mobile'}]})]);
-		const r = await env.ask('favoritePerson', {personId: 'p1', defaultData: {value: '4085551234', type: 'type_mobile',
-			contactPointType: 'contact_point_type_phoneNumber', listIndex: 0}});
-		assert.equal(r.errorText, 'MojoService: no errorCode supplied _setFavoriteDefault: cannot set a default on a person ' +
-			'that is not a favorite');
+		await env.db.put([person('p1', {phoneNumbers: [{value: '111', type: 'type_home'},
+			{value: '4085551234', type: 'type_mobile'}]}),
+		person('p2', {favorite: true, phoneNumbers: [{value: '222', type: 'type_home'},
+			{value: '4085550000', type: 'type_mobile'}]})]);
+		const dd = v => ({value: v, type: 'type_mobile', contactPointType: 'contact_point_type_phoneNumber', listIndex: 2});
+		assert.equal(await env.ask('favoritePerson', {personId: 'p1', defaultData: dd('4085551234')}), true);
+		assert.equal(await env.ask('favoritePerson', {personId: 'p2', defaultData: dd('4085550000')}), true);
+		for (const p of env.db.all(PERSON)) {
+			assert.equal(p.favorite, true);
+			assert.deepEqual(p.phoneNumbers.map(n => n.favoriteData), [{'com.palm.app.phone': {listIndex: 2}}, {}]);
+		}
+		const r = await env.ask('favoritePerson', {personId: 'p1', defaultData: dd('999')});
+		assert.match(r.errorText, /Could not find a contact point with value - 999/);
 		env.stop();
 	});
 
