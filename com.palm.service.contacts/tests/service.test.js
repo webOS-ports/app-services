@@ -305,30 +305,43 @@ describe('com.palm.service.contacts', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
-	it('findPersonByPhone finds the person, the matching number with it when asked', async () => {
-		const env = await boot();
-		// The form updatePersonLocaleAll writes; the linker's own form is not found (README.md).
-		await env.db.put([person('p1', {phoneNumbers: [{value: '(408) 555-1234', type: 'type_mobile',
-			normalizedValue: '-4321555---'}]}), person('p9', {phoneNumbers: [{value: '(212) 555-1234', type: 'type_mobile',
-			normalizedValue: '-4321555212--1-+'}]})]);
-		const r = await env.ask('findPersonByPhone', {phoneNumber: '4085551234'});
-		assert.equal(r._id, 'p1');
-		assert.equal(r.returnValue, true);
-		const m = await env.ask('findPersonByPhone', {phoneNumber: '408-555-1234', params: {includeMatchingItem: true}});
-		assert.equal(m.item.value, '(408) 555-1234');
-		assert.deepEqual(await env.ask('findPersonByPhone', {phoneNumber: '2125550000', params: {returnAllMatches: true}}), []);
-		assert.deepEqual(await env.ask('findPersonByPhone', {phoneNumber: '2125550000'}), {returnValue: true});
-		env.stop();
-	});
+	it('findPersonByPhone finds the person by the form the linker writes, the matching number with it when asked (C12)',
+		async () => {
+			const env = await boot();
+			// normalizedValue as the linker writes it (lib/model.js normalizePhoneNumber, region US).
+			await env.db.put([person('p1', {phoneNumbers: [{value: '(408) 555-1234', type: 'type_mobile',
+				normalizedValue: '-4321555804--1-+'}]}),
+			person('p5', {phoneNumbers: [{value: '555-1234', type: 'type_mobile', normalizedValue: '-4321555--1-+'}]}),
+			person('p9', {phoneNumbers: [{value: '(212) 555-1234', type: 'type_mobile', normalizedValue: '-4321555212--1-+'}]}),
+			person('pn', {phoneNumbers: [{value: '+31 6 12345678', type: 'type_mobile', normalizedValue: '-8765432-16-13-+'}]})]);
+			const r = await env.ask('findPersonByPhone', {phoneNumber: '4085551234'});
+			assert.equal(r._id, 'p1');
+			assert.equal(r.returnValue, true);
+			// A shorter number that only ends the same way is not a match for the whole one.
+			const all = await env.ask('findPersonByPhone', {phoneNumber: '+1 408 555 1234', params: {returnAllMatches: true}});
+			assert.deepEqual(all.map(p => p._id), ['p1']);
+			const m = await env.ask('findPersonByPhone', {phoneNumber: '408-555-1234', params: {includeMatchingItem: true}});
+			assert.equal(m.item.value, '(408) 555-1234');
+			assert.equal((await env.ask('findPersonByPhone', {phoneNumber: '+31612345678'}))._id, 'pn');
+			assert.deepEqual(await env.ask('findPersonByPhone', {phoneNumber: '2125550000', params: {returnAllMatches: true}}), []);
+			assert.deepEqual(await env.ask('findPersonByPhone', {phoneNumber: '2125550000'}), {returnValue: true});
+			assert.deepEqual(env.of('com.palm.db', 'find').map(c => c.args.query.where[0].val).slice(0, 2),
+				['-4321555804', '-4321555804']);
+			// A value with no digits is not looked up, as the linker does not look it up.
+			const finds = env.of('com.palm.db', 'find').length;
+			assert.deepEqual(await env.ask('findPersonByPhone', {phoneNumber: 'abc', params: {returnAllMatches: true}}), []);
+			assert.equal(env.of('com.palm.db', 'find').length, finds);
+			env.stop();
+		});
 
 	it('findPersonByPhone with returnAllMatches lists the best match first (C8)', async () => {
 		const env = await boot();
-		await env.db.put([person('pb', {phoneNumbers: [{value: '555-1234', normalizedValue: '-4321555---'}]}),
-			person('pa', {phoneNumbers: [{value: '(408) 555-1234', normalizedValue: '-4321555---'}]}),
-			person('pc', {phoneNumbers: [{value: '555-1234', normalizedValue: '-4321555---'}]})]);
-		const r = await env.ask('findPersonByPhone', {phoneNumber: '4085551234', params: {returnAllMatches: true}});
+		await env.db.put([person('pb', {phoneNumbers: [{value: '555-1234', normalizedValue: '-4321555--1-+'}]}),
+			person('pa', {phoneNumbers: [{value: '(408) 555-1234', normalizedValue: '-4321555804--1-+'}]}),
+			person('pc', {phoneNumbers: [{value: '555-1234', normalizedValue: '-4321555--1-+'}]})]);
+		const r = await env.ask('findPersonByPhone', {phoneNumber: '555-1234', params: {returnAllMatches: true}});
 		// Equal matches keep the order db8 gave them.
-		assert.deepEqual(r.map(p => p._id), ['pa', 'pb', 'pc']);
+		assert.deepEqual(r.map(p => p._id), ['pb', 'pc', 'pa']);
 		env.stop();
 	});
 
@@ -459,13 +472,14 @@ describe('com.palm.service.contacts', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
-	it('updatePersonLocaleAll normalises the numbers again and saves the region', async () => {
+	it('updatePersonLocaleAll normalises the numbers again as the linker does, and saves the region (C12)', async () => {
 		const env = await boot();
 		await env.db.put([{_id: 'pr', _kind: 'com.palm.app.contacts.prefs:1', listSortOrder: 'LAST_FIRST'},
 			person('p1', {phoneNumbers: [{value: '4085551234', normalizedValue: 'old'}]}), person('p2')]);
 		assert.deepEqual(await env.ask('updatePersonLocaleAll', {locale: 'de'}), {returnValue: true});
 		const [p1, p2] = env.db.all(PERSON);
-		assert.equal(p1.phoneNumbers[0].normalizedValue, '-4321555804---');
+		// The linker's form for region DE (C12), not "-<subscriber number>---".
+		assert.equal(p1.phoneNumbers[0].normalizedValue, '-43215558-04-94-+');
 		assert.deepEqual(p2.phoneNumbers, []);
 		assert.equal(env.db.all('com.palm.app.contacts.prefs:1')[0].contactsPhoneRegion, 'de');
 		// A person whose numbers are already so is not written again.
@@ -473,6 +487,19 @@ describe('com.palm.service.contacts', {skip: NO_FRAMEWORKS}, () => {
 		await env.ask('updatePersonLocaleAll', {locale: 'de'});
 		assert.equal(env.of('com.palm.db', 'merge').length, merges + 1);
 		assert.deepEqual(env.of('com.palm.db', 'merge').pop().args.objects.map(o => o._id), ['pr']);
+		env.stop();
+	});
+
+	it('a number updatePersonLocaleAll wrote is found by findPersonByPhone, as the linker stores it (C12)', async () => {
+		const env = await boot();
+		// The old service's form, from an earlier updatePersonLocaleAll.
+		await env.db.put([person('p1', {phoneNumbers: [{value: '(408) 555-1234', type: 'type_mobile',
+			normalizedValue: '-4321555---'}]}), person('p5', {phoneNumbers: [{value: '555-1234', type: 'type_mobile',
+			normalizedValue: '-4321555---'}]})]);
+		assert.deepEqual(await env.ask('updatePersonLocaleAll', {locale: 'us'}), {returnValue: true});
+		assert.deepEqual(env.db.all(PERSON).map(p => p.phoneNumbers[0].normalizedValue), ['-4321555804--1-+', '-4321555--1-+']);
+		const all = await env.ask('findPersonByPhone', {phoneNumber: '4085551234', params: {returnAllMatches: true}});
+		assert.deepEqual(all.map(p => p._id), ['p1']);
 		env.stop();
 	});
 });

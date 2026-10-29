@@ -109,14 +109,18 @@ test. The old service's bugs, by number:
 - C11 (mended): `preBackup` lists the photos of the first 500 Palm
   Profile contacts only, and an empty path for every photo without a
   value. It now lists those of every contact, and no empty paths.
-- C12: `findPersonByPhone` searches for the normalised form
+- C12 (mended): `findPersonByPhone` searches for the normalised form
   `updatePersonLocaleAll` writes, which is not the form the linker writes:
   a 10-digit number the linker normalised is not found, and a shorter
   number that ends the same way is. `updatePersonLocaleAll` writes that
   other form (`-<subscriber number>---`, from the parsed number), so after
   it the linker's phone matches no longer line up with what it stored.
-  Not mended here: the two forms are the linker's and this service's
-  together, and which one is right is a decision of its own.
+  Both now use the linker's form (lib/model.js `normalizePhoneNumber`,
+  the linker's own copy): `findPersonByPhone` looks a number up as the
+  linker's "similar mobile number" ranker does (the search form without
+  its closing `-`, a prefix of what the linker stores for the same
+  number), and `updatePersonLocaleAll` writes what the linker writes, for
+  the new region.
 - C13: an organization's `location` was written as the framework's Address
   object, internals and all, and each save of the contact wrapped the
   stored one once more, one level deeper.

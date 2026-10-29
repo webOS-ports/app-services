@@ -65,7 +65,7 @@ async function start({palmbus, exit, idleMs, log = console, frameworksRoot, now,
 		const persons = createPersons({db, model, linkHash});
 		const photos = createPhotos({call, db, log, now});
 		const prefs = createPrefs({db, log});
-		const methods = createCommands({db, call, persons, photos, prefs, model, G, log, timeoutsS, photoDir});
+		const methods = createCommands({db, call, persons, photos, prefs, model, G, P, log, timeoutsS, photoDir});
 		log.log(NAME + ': up (' + Object.keys(methods).length + ' methods, ' + language + '_' + region + ', node ' +
 			process.version + ')');
 		return methods;
