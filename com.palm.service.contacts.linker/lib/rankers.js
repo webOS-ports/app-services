@@ -365,21 +365,19 @@ function createRankers({db, persons, model, G, clb, linkHash}) {
 				throw new Error('Autolinker.manualUnlinks: did not get a result when getting manualUnlinks');
 			}
 			/*
-				The old code kept the contact ids it was walking in one variable
-				for this contact, which the helpers below set to the last
-				person's they walk: a walk that calls one goes on in that
-				person's ids, and fails past their end. Kept as it was.
+				Each walk has its own ids. The old code kept them in one variable
+				for this contact, which the walk in hits() set to another
+				person's: the walk that called it went on in those, past their
+				end, and failed the contact with a TypeError.
 			*/
-			let shared;
 			const hits = (id, skip) => {
 				for (const key of Object.keys(weights)) {
 					const w = weights[key];
 					if (w === skip) {
 						continue;
 					}
-					shared = w.person.rec.contactIds;
-					for (let i = 0, n = shared.length; i < n; i++) {
-						if (shared[i] === id) {
+					for (const cid of w.person.rec.contactIds) {
+						if (cid === id) {
 							add(weights, SIMILAR.manualUnlink, w.person, true);
 						}
 					}
@@ -396,12 +394,7 @@ function createRankers({db, persons, model, G, clb, linkHash}) {
 				}
 				for (const key of Object.keys(weights)) {
 					const w = weights[key];
-					shared = w.person.rec.contactIds;
-					for (let i = 0, n = shared.length; i < n; i++) {
-						const cid = shared[i];
-						if (cid === undefined) {
-							throw new TypeError('Cannot read properties of undefined (reading \'getValue\')');
-						}
+					for (const cid of w.person.rec.contactIds.slice()) {
 						if (cid === idA) {
 							hits(idB, w);
 						}
