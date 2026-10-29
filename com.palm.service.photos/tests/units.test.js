@@ -287,3 +287,47 @@ test('download: to the final name only when complete', async t => {
 		}))}), /reset/);
 	assert.deepEqual(fs.readdirSync(root.dir).sort(), ['media', 'p.jpg'], 'no .part left behind');
 });
+
+test('download: copies a file:// photo from inside the media root only', async t => {
+	const root = tmpRoot();
+	t.after(root.cleanup);
+	const noFetch = async () => {
+		throw new Error('fetched');
+	};
+	const store = path.join(root.media, '.mega-photos');
+	fs.mkdirSync(store);
+	const src = path.join(store, 'j7Bx-photo.jpg');
+	fs.writeFileSync(src, 'plain photo');
+	const out = path.join(root.media, 'out');
+	fs.mkdirSync(out);
+	const dest = path.join(out, 'p.jpg');
+	const opts = {fetchImpl: noFetch, localRoot: root.media};
+
+	assert.equal(await download(`file://${src}`, dest, opts), 'plain photo'.length);
+	assert.equal(fs.readFileSync(dest, 'utf8'), 'plain photo');
+	assert.ok(fs.existsSync(src), 'the connector\'s copy is left alone');
+
+	// Without a root, as before: never
+	await assert.rejects(download(`file://${src}`, dest + '1', {fetchImpl: noFetch}), /not fetching/);
+	// Outside the root, directly, through .. and through a symlink
+	const outside = path.join(root.dir, 'secret');
+	fs.writeFileSync(outside, 'secret');
+	await assert.rejects(download(`file://${outside}`, dest + '2', opts), /outside/);
+	await assert.rejects(download(`file://${store}/../../secret`, dest + '3', opts), /outside/);
+	fs.symlinkSync(outside, path.join(store, 'link.jpg'));
+	await assert.rejects(download(`file://${store}/link.jpg`, dest + '4', opts), /outside/);
+	// Not a file, missing, empty, too big
+	await assert.rejects(download(`file://${store}`, dest + '5', opts), /not a file/);
+	await assert.rejects(download(`file://${store}/gone.jpg`, dest + '6', opts), /no file/);
+	fs.writeFileSync(path.join(store, 'empty.jpg'), '');
+	await assert.rejects(download(`file://${store}/empty.jpg`, dest + '7', opts), /empty/);
+	await assert.rejects(download(`file://${src}`, dest + '8', {...opts, maxBytes: 3}), /more than/);
+	assert.deepEqual(fs.readdirSync(out), ['p.jpg'], 'nothing else written');
+
+	// A temporary copy goes once copied, and only then
+	await assert.rejects(download(`file://${src}`, dest + '9', {...opts, removeSource: true, maxBytes: 3}), /more than/);
+	assert.ok(fs.existsSync(src), 'kept when the copy failed');
+	assert.equal(await download(`file://${src}`, dest + '9', {...opts, removeSource: true}), 'plain photo'.length);
+	assert.equal(fs.readFileSync(dest + '9', 'utf8'), 'plain photo');
+	assert.ok(!fs.existsSync(src), 'removed');
+});
