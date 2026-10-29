@@ -181,11 +181,32 @@ describe('the reminders service', () => {
 		assert.equal(env.reminder('b').showTime, T0 + 5 * HOUR - 5 * MIN);
 	});
 
-	it('old bug 2: a failed reminder query leaves the command without an answer', async () => {
-		const env = await start([]);
+	it('bug 2: a failed reminder query is answered, and leaves the wake as it was', async () => {
+		const env = await start([event({_id: 's', dtstart: T0 + HOUR, dtend: T0 + 2 * HOUR, trigger: '-PT15M'})]);
+		const wake = env.byName('wake');
 		env.world.fail('com.palm.db', 'find', {n: 5, when: a => a.query.from === 'com.palm.service.calendar.reminders:1' &&
 			a.query.orderBy === 'showTime'});
-		assert.equal(await env.world.request('onSnooze', {reminderId: 'R1'}, {waitMs: 1000}), 'NO REPLY');
+		const reply = await env.world.request('onSnooze', {reminderId: env.reminder('s')._id}, {waitMs: 1000});
+		assert.equal(reply.returnValue, true);
+		assert.deepEqual(env.byName('wake'), wake);
+		env.world.clearFaults();
+		env.world.fail('com.palm.db', 'find', {n: 5, when: a => a.query.from === 'com.palm.service.calendar.reminders:1' &&
+			a.query.orderBy === 'autoCloseTime'});
+		assert.deepEqual(await env.world.request('onSnooze', {reminderId: env.reminder('s')._id}, {waitMs: 1000}),
+			{returnValue: true, status: 'dbError'});
+	});
+
+	it('bug 2: a failed event query in onInit is answered, and the next run starts over', async () => {
+		const env = await boot({now: T0, tz: 'Europe/Amsterdam'});
+		await env.world.db.put([event({_id: 'a', dtstart: T0 + HOUR, dtend: T0 + 2 * HOUR, trigger: '-PT15M'})]);
+		env.world.fail('com.palm.db', 'find', {when: a => a.query.from === 'com.palm.calendarevent:1'});
+		assert.equal((await env.world.request('onInit', {}, {waitMs: 1000})).returnValue, true);
+		assert.equal(env.world.state().status[0].status, 'FAIL');
+		env.world.clearFaults();
+		await env.world.request('onDBChanged', {});
+		// The start over deletes the status; the reminder is back.
+		assert.equal(env.world.state().reminders.filter(r => !r._del).length, 1);
+		assert.deepEqual(env.world.state().status.filter(r => !r._del), []);
 	});
 
 	it('bug 1: an event earlier than the waiting wake moves the wake, and the watch is armed again', async () => {
