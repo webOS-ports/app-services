@@ -119,18 +119,78 @@ describe('the linker', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
-	it('runs nothing for a callback it cannot adopt: one delivered again while the first has it', async () => {
-		// activitymanager can deliver one callback several times; the old service's adopt failed for
-		// the repeats, and mojoservice then ran nothing (contacts.linker 53a0ec2 describes it).
-		const env = await boot({adoptFails: true});
+	it('runs nothing for a callback it cannot adopt', async () => {
+		const env = await boot({adopt: 'busy'});
 		await env.putContacts([name('Ann', 'Lee'), name('Ann', 'Lee')]);
 		const r = await env.ask('dbUpdatedRelinkChanges', {revChangedStart: 0, $activity: {activityId: 7}},
 			{service: 'com.palm.activitymanager'});
 		assert.equal(r.returnValue, true);
 		assert.equal(r.status, 'adopt failed');
-		assert.match(r.error, /adopt \{"activityId":7,"subscribe":true\}: Resource temporarily unavailable$/);
+		assert.match(r.error, /adopt \{"activityId":7,"subscribe":true,"wait":true\}: Resource temporarily unavailable$/);
 		assert.equal(env.persons().length, 0);
 		assert.equal(env.calls.filter(c => c.method === 'complete' || c.method === 'create').length, 0);
+		env.stop();
+	});
+
+	it('waits for an activity still held, and runs when it is handed over', async () => {
+		// After a run completes linkerWatch with restart:true and contacts are left, activitymanager
+		// calls back before that run lets go of it; the old service's adopt failed and linkerWatch
+		// stopped (README.md).
+		const env = await boot({adopt: 'queued'});
+		await env.putContacts([name('Ann', 'Lee'), name('Ann', 'Lee')]);
+		const r = await env.send('dbUpdatedRelinkChanges', {revChangedStart: 0, $activity: {activityId: 7}},
+			{service: 'com.palm.activitymanager'});
+		assert.deepEqual(r, {returnValue: true});
+		await env.settle();
+		assert.equal(env.calls.find(c => c.method === 'adopt').args.wait, true);
+		assert.equal(env.persons().length, 0);
+		assert.ok(!env.calls.some(c => c.method === 'complete'));
+		env.handOver('orphan');
+		await env.settle();
+		assert.equal(env.persons().length, 1);
+		assert.equal(env.calls.find(c => c.method === 'complete').args.activityId, 7);
+		env.stop();
+	});
+
+	it('runs nothing when the activity it waits for is cancelled', async () => {
+		const env = await boot({adopt: 'queued'});
+		await env.putContacts([name('Ann', 'Lee'), name('Ann', 'Lee')]);
+		await env.send('dbUpdatedRelinkChanges', {revChangedStart: 0, $activity: {activityId: 7}},
+			{service: 'com.palm.activitymanager'});
+		await env.settle();
+		env.handOver('cancel');
+		await env.settle();
+		assert.equal(env.persons().length, 0);
+		assert.equal(env.calls.filter(c => c.method === 'complete' || c.method === 'create').length, 0);
+		// It has given up: the same callback again is taken as a new one, not as a repeat.
+		const again = await env.send('dbUpdatedRelinkChanges', {revChangedStart: 0, $activity: {activityId: 7}},
+			{service: 'com.palm.activitymanager'});
+		assert.deepEqual(again, {returnValue: true});
+		env.handOver('cancel');
+		await env.settle();
+		env.stop();
+	});
+
+	it('runs a callback delivered again while the first runs only once', async () => {
+		const env = await boot({adopt: 'queued'});
+		await env.putContacts([name('Ann', 'Lee'), name('Ann', 'Lee')]);
+		const cb = {revChangedStart: 0, $activity: {activityId: 7}};
+		await env.send('dbUpdatedRelinkChanges', cb, {service: 'com.palm.activitymanager'});
+		await env.settle();
+		const again = await env.send('dbUpdatedRelinkChanges', cb, {service: 'com.palm.activitymanager'});
+		assert.equal(again.returnValue, true);
+		assert.match(again.status, /from _rev 0 delivered again while it runs$/);
+		env.handOver('orphan');
+		await env.settle();
+		assert.equal(env.calls.filter(c => c.method === 'adopt').length, 1);
+		assert.equal(env.calls.filter(c => c.method === 'complete').length, 1);
+		// Once it is done, the same _rev is a new callback (a run that reached no further).
+		await env.send('dbUpdatedRelinkChanges', cb, {service: 'com.palm.activitymanager'});
+		await env.settle();
+		assert.equal(env.calls.filter(c => c.method === 'adopt').length, 2);
+		env.handOver('orphan');
+		await env.settle();
+		assert.equal(env.calls.filter(c => c.method === 'complete').length, 2);
 		env.stop();
 	});
 

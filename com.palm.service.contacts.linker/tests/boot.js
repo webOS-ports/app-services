@@ -41,10 +41,17 @@ const ACCOUNTS = {
 
 const quiet = {log() {}, warn() {}, error() {}, info() {}};
 
-async function boot({completeFails = false, adoptFails = false} = {}) {
+/*
+	adopt: how activitymanager answers an adopt. "now": adopted. "busy": held
+	by another, errorCode 11 (an adopt that does not wait). "queued": not yet
+	adopted, and the subscription's next event is the one handOver(event)
+	sends ("orphan" hands it over).
+*/
+async function boot({completeFails = false, adopt = 'now'} = {}) {
 	const db = createFakeDb({prefix: 'C'});
 	const calls = [];
 	let pending = 0, last = Date.now();
+	let handOver = null;
 
 	async function onCall(uri, args) {
 		pending++;
@@ -67,11 +74,17 @@ async function boot({completeFails = false, adoptFails = false} = {}) {
 				return {returnValue: true};
 			}
 			if (service === 'com.palm.activitymanager') {
-				if (method === 'adopt' && adoptFails) {
+				if (method === 'adopt' && adopt === 'busy') {
 					return {returnValue: false, errorCode: 11, errorText: 'Resource temporarily unavailable'};
 				}
+				if (method === 'adopt' && adopt === 'queued') {
+					const event = new Promise(resolve => {
+						handOver = name => resolve({event: name, activityId: args.activityId, subscribed: true, returnValue: true});
+					});
+					return [{returnValue: true, adopted: false, subscribed: true}, event];
+				}
 				if (method === 'adopt') {
-					return {returnValue: true, adopted: true};
+					return {returnValue: true, adopted: true, subscribed: true};
 				}
 				if (method === 'complete' && completeFails) {
 					return {returnValue: false, errorCode: 2, errorText: 'Activity ID not found'};
@@ -120,7 +133,15 @@ async function boot({completeFails = false, adoptFails = false} = {}) {
 		return r.map((x, i) => Object.assign({}, list[i], {_id: x.id}));
 	}
 
-	return {db, calls, ask, settle, persons, personOf, putContacts, service, pb,
+	// A call whose reply is not awaited, and settle() not with it: -> its first reply.
+	function send(method, params, caller) {
+		return pb.request(NAME, method, params || {}, caller).then(JSON.parse);
+	}
+
+	return {db, calls, ask, send, settle, persons, personOf, putContacts, service, pb,
+		handOver(event) {
+			handOver(event);
+		},
 		stop() {
 			if (service.bus.stop) {
 				service.bus.stop();

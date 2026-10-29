@@ -204,8 +204,9 @@ function createBus({ palmbus, name, idleMs = IDLE_MS, callTimeoutMs = CALL_TIMEO
 		},
 
 		// [linker] A subscription: { first, cancel } once its first reply is in (first, the
-		// parsed reply; rejected as call() rejects). cancel() ends it.
-		subscribe(uri, args, { timeoutMs = callTimeoutMs } = {}) {
+		// parsed reply; rejected as call() rejects). The replies after it go to onEvent, parsed
+		// ({} if not JSON). cancel() ends it.
+		subscribe(uri, args, { timeoutMs = callTimeoutMs, onEvent } = {}) {
 			return new Promise((resolve, reject) => {
 				let req = null, settled = false;
 				const cancel = () => { try { if (req && typeof req.cancel === "function") { req.cancel(); } } catch (e) { /* gone already */ } };
@@ -219,7 +220,11 @@ function createBus({ palmbus, name, idleMs = IDLE_MS, callTimeoutMs = CALL_TIMEO
 					req.addListener("response", (m) => {
 						let r;
 						try { r = JSON.parse(m.payload()); }
-						catch (e) { finish(reject, new CloudError("BUS_BAD_REPLY", uri + ": reply is not JSON")); cancel(); return; }
+						catch (e) {
+							if (settled) { if (onEvent) { onEvent({}); } return; }
+							finish(reject, new CloudError("BUS_BAD_REPLY", uri + ": reply is not JSON")); cancel(); return;
+						}
+						if (settled) { if (onEvent) { onEvent(r && typeof r === "object" ? r : {}); } return; }
 						if (!r || typeof r !== "object" || r.returnValue === false) {
 							const code = (r && r.errorCode !== undefined && r.errorCode !== null) ? r.errorCode : "BUS_ERROR";
 							finish(reject, new CloudError(code, (r && r.errorText) || (uri + " failed")));

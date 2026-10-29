@@ -74,13 +74,6 @@ them by these numbers):
   a `TypeError`.
 - When there are several speed-dial backups, every one of them restores the
   first one's numbers.
-- `linkerWatch` stops after a run that leaves changed contacts behind (more
-  than the 500 a run reads, or contacts changed while it ran).
-  activitymanager calls back at once, while the previous callback still
-  holds the activity, so the adopt fails with errorCode 11 ("Resource
-  temporarily unavailable"), the callback runs nothing, and nothing calls
-  back again. On the VM both services stopped at 491 persons out of 1000
-  contacts.
 
 These things deliberately differ from the old service:
 
@@ -96,6 +89,17 @@ These things deliberately differ from the old service:
   back in the order they were asked for.
 - When `linkerWatch` cannot be completed, it is created again from the
   revision the run reached.
+- activitymanager's callbacks adopt the activity with `wait: true`. A run
+  that leaves changed contacts behind (more than the 500 a run reads, or
+  contacts changed while it ran) is called back at once, while the run
+  before it still holds the activity. mojoservice's adopt did not wait, so
+  it failed with errorCode 11 ("Resource temporarily unavailable"), the
+  callback ran nothing, and `linkerWatch` stopped: on the VM the old
+  service linked 491 persons out of 1000 contacts and no more. The callback
+  now runs once the activity is handed over to it. A callback for the
+  activity and `_rev` of one still running is that callback delivered
+  again, and runs nothing (activitymanager's callback serial cannot tell
+  them apart: it is seeded from the time in seconds).
 - `dbUpdatedRelinkChanges` called by hand, from no activity, re-arms
   nothing. The old service re-armed the activity mojoservice had made for
   the call, which turned every such call into one more watch that called
