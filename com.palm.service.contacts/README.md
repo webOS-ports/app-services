@@ -75,10 +75,11 @@ test. The old service's bugs, by number:
   too, so the default is lost; and what is left stays on that shared object
   for the next persons the service saves. Each point now has a `{}` of
   its own.
-- C5: `favoritePerson` with `defaultData` reads the person twice: the
+- C5 (mended): `favoritePerson` with `defaultData` reads the person twice: the
   default is set on the second copy, which refuses a person that is not a
   favourite yet, and for one that is, the first copy is saved after it and
-  writes the points back without the default.
+  writes the points back without the default. The default is now set on
+  the person made a favourite, and the two saved together.
 - C6: `vCardExportOne` and `vCardExportAll` always write vCard 3.0: the
   service passed `vCardVersion`, the exporter read `version`.
 - C7: the vCard URL labels are off by one: a work URL is labelled `HOME`,

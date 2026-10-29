@@ -322,23 +322,37 @@ function createCommands({db, call, persons, photos, prefs, model, G, log = conso
 
 	// Person._setFavoriteDefault.
 	async function setDefault(param, appId) {
+		const app = checkDefault(param, appId);
+		const person = await persons.findById(param.personId);
+		require_(person !== undefined, '_setFavoriteDefault: could not find the person with id - ' + param.personId);
+		applyDefault(person, param, app);
+		return persons.save(person);
+	}
+
+	// The arguments checked, in the old order -> the app's id.
+	function checkDefault(param, appId) {
 		require_(appId !== undefined, '_setFavoriteDefault: missing required argument - applicationID');
-		appId = appId.split(' ')[0];
-		const personId = param.personId;
-		require_(personId !== undefined, '_setFavoriteDefault: missing required argument - personId');
+		const app = appId.split(' ')[0];
+		require_(param.personId !== undefined, '_setFavoriteDefault: missing required argument - personId');
 		const defaultData = param.defaultData;
 		require_(defaultData !== undefined, '_setFavoriteDefault: missing required argument - defaultData');
-		const {contactPointType, listIndex, value, type} = defaultData;
+		const {contactPointType, listIndex, value} = defaultData;
 		require_(contactPointType !== undefined, '_setFavoriteDefault: missing required defaultData property - contactPointType');
 		require_(SUPPORTED_FAVORITE_TYPES.indexOf(contactPointType) >= 0,
 			'_setFavoriteDefault: unsupported contact point type specified');
 		require_(listIndex !== undefined, '_setFavoriteDefault: missing required defaultData property - listIndex');
 		require_(value !== undefined, '_setFavoriteDefault: missing required defaultData property - value');
-		const person = await persons.findById(personId);
-		require_(person !== undefined, '_setFavoriteDefault: could not find the person with id - ' + personId);
+		return app;
+	}
+
+	// The default set on the person read, not saved yet.
+	function applyDefault(person, param, appId) {
+		appId = checkDefault(param, appId);
+		const personId = param.personId;
+		const {contactPointType, listIndex, value, type, auxData} = param.defaultData;
 		require_(persons.isFavorite(person), '_setFavoriteDefault: cannot set a default on a person that is not a favorite');
 		const normalized = persons.normalizedFor(contactPointType, value);
-		if (!persons.setDefault(person, contactPointType, normalized, type, appId, listIndex, defaultData.auxData)) {
+		if (!persons.setDefault(person, contactPointType, normalized, type, appId, listIndex, auxData)) {
 			throw new Error('Setting favorite default on person - ' + personId + ' - failed! Could not find a contact point with value - ' +
 				value + ' - on person');
 		}
@@ -349,18 +363,13 @@ function createCommands({db, call, persons, photos, prefs, model, G, log = conso
 			}
 		}
 		person.defaultsChanged = true;
-		return persons.save(person);
 	}
 
-	/*
-		Person._favoritePerson: the person read and made a favourite; with
-		defaultData, the default set on the person as read again (which
-		refuses one that was not a favourite yet); then the first one saved.
-	*/
+	// The default, if one is given, is set on the person made a favourite, and both saved at once (C5).
 	async function favoritePerson(params) {
 		const person = await personWithFavorite(params.personId, true);
 		if (params.defaultData) {
-			await setDefault(params, applicationId(params));
+			applyDefault(person, params, applicationId(params));
 		}
 		return persons.save(person);
 	}
