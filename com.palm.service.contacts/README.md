@@ -80,8 +80,9 @@ test. The old service's bugs, by number:
   favourite yet, and for one that is, the first copy is saved after it and
   writes the points back without the default. The default is now set on
   the person made a favourite, and the two saved together.
-- C6: `vCardExportOne` and `vCardExportAll` always write vCard 3.0: the
-  service passed `vCardVersion`, the exporter read `version`.
+- C6 (mended): `vCardExportOne` and `vCardExportAll` always write vCard
+  3.0: the service passed `vCardVersion`, the exporter read `version`.
+  `vCardVersion: "2.1"` now writes the exporter's 2.1 card.
 - C7: the vCard URL labels are off by one: a work URL is labelled `HOME`,
   a home URL `TYPE=` with no label.
 - C8: `findPersonByPhone` with `returnAllMatches` lists the worst match

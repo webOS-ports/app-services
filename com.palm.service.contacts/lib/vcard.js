@@ -8,7 +8,8 @@
 	contacts framework's VCardImporter and VCardExporter did it, line by
 	line and quirk by quirk: the importer reads 3.0 and 2.1 alike, keys every
 	line on its prefix (TEL, EMAIL, X-GTALK...) and takes the label from
-	what comes before the first colon; the exporter writes vCard 3.0.
+	what comes before the first colon; the exporter writes vCard 3.0, or 2.1
+	when asked (C6).
 */
 
 const fs = require('fs');
@@ -495,9 +496,9 @@ function labelsFor(table, type) {
 	return other;
 }
 
-// _build3_0TypeLabel.
-function typeLabel(labels) {
-	return 'TYPE=' + labels.join(',');
+// _buildCorrectLabelBasedOnVersion: TYPE=A,B for 3.0, A;B for 2.1.
+function typeLabel(labels, v21) {
+	return v21 ? labels.join(';') : 'TYPE=' + labels.join(',');
 }
 
 function createExporter({model}) {
@@ -528,8 +529,15 @@ function createExporter({model}) {
 		return NO_NAME;
 	}
 
-	// VCardExporter._exportVCard: the lines of one person, or none.
-	function vcard(raw, onlyPhoneNumbers) {
+	/*
+		VCardExporter._exportVCard: the lines of one person, or none. version
+		'2.1' writes a 2.1 card (its labels A;B, and CHARSET=UTF-8 on the
+		name, full name and numbers unless charset is another); any other a
+		3.0 card.
+	*/
+	function vcard(raw, onlyPhoneNumbers, {version, charset} = {}) {
+		const v21 = version === '2.1';
+		const cs = v21 && (charset || 'UTF-8') === 'UTF-8' ? ';CHARSET=UTF-8' : '';
 		const p = personView(raw);
 		const out = [];
 		if (onlyPhoneNumbers && p.phoneNumbers.length < 1) {
@@ -540,13 +548,13 @@ function createExporter({model}) {
 			name = newEntry('Name', {familyName: displayName(p)});
 		}
 		out.push(MARKERS.BEGIN + '\r');
-		out.push(MARKERS.VERSION + ':3.0\r');
+		out.push(MARKERS.VERSION + (v21 ? ':2.1\r' : ':3.0\r'));
 		const part = v => (v ? escapeString(v) : '');
-		out.push('N:' + part(name.familyName) + ';' + part(name.givenName) + ';' + part(name.middleName) + ';' +
+		out.push('N' + cs + ':' + part(name.familyName) + ';' + part(name.givenName) + ';' + part(name.middleName) + ';' +
 			part(name.honorificPrefix) + ';' + part(name.honorificSuffix) + '\r');
 		const shown = displayName(p);
 		if (!bad(shown)) {
-			out.push('FN:' + escapeString(shown) + '\r');
+			out.push('FN' + cs + ':' + escapeString(shown) + '\r');
 		}
 		if (!onlyPhoneNumbers) {
 			const org = p.organization;
@@ -575,23 +583,23 @@ function createExporter({model}) {
 			if (!value) {
 				continue;
 			}
-			const label = typeLabel(labelsFor(LABELS.PHONE, n.type));
-			out.push('TEL' + (label.length > 0 ? ';' + label : '') + ':' + escapeString(value) + '\r');
+			const label = typeLabel(labelsFor(LABELS.PHONE, n.type), v21);
+			out.push('TEL' + cs + (label.length > 0 ? ';' + label : '') + ':' + escapeString(value) + '\r');
 		}
 		if (!onlyPhoneNumbers) {
 			for (const e of p.emails) {
 				if (!bad(e.value)) {
-					out.push('EMAIL;' + typeLabel(labelsFor(LABELS.EMAIL, e.type)) + ':' + escapeString(e.value) + '\r');
+					out.push('EMAIL;' + typeLabel(labelsFor(LABELS.EMAIL, e.type), v21) + ':' + escapeString(e.value) + '\r');
 				}
 			}
 			for (const a of p.addresses) {
 				const formatted = (a.streetAddress ? escapeString(a.streetAddress.replace(/\n/g, ' ')) : '') + ';' +
 					part(a.locality) + ';' + part(a.region) + ';' + part(a.postalCode) + ';' + part(a.country);
-				out.push('ADR;' + typeLabel(labelsFor(LABELS.ADDRESS, a.type)) + ':;;' + formatted + '\r');
+				out.push('ADR;' + typeLabel(labelsFor(LABELS.ADDRESS, a.type), v21) + ':;;' + formatted + '\r');
 			}
 			for (const u of p.urls) {
 				if (!bad(u.value)) {
-					out.push('URL;' + typeLabel(labelsFor(LABELS.URL, u.type)) + ':' + escapeString(u.value) + '\r');
+					out.push('URL;' + typeLabel(labelsFor(LABELS.URL, u.type), v21) + ':' + escapeString(u.value) + '\r');
 				}
 			}
 			for (const i of p.ims) {
