@@ -103,8 +103,9 @@ function createCommands({db, call, rem, log = console}) {
 		The batch's two answers: the deleted events and the changed ones since
 		lastRevNumber. -> the ids of all of them, of those still there with an
 		alarm (to schedule again), of the deleted ones, and the revision got
-		to: the higher of the two lists' last ones, or lastRevNumber + 1 when
-		both are empty.
+		to: the higher of the two lists' last ones, but no further than the
+		last one of a list db8 cut at its page, or lastRevNumber + 1 when both
+		are empty.
 	*/
 	function processDBChanges(result) {
 		let lastRevNumber = result.lastRevNumber;
@@ -130,6 +131,12 @@ function createCommands({db, call, rem, log = console}) {
 			eventRev = events[eventsLength - 1]._rev;
 		}
 		lastRevNumber = (delEventRev > eventRev ? delEventRev : eventRev);
+		// Bug 8: a list cut at db8's page ends where it was cut; the events after it are read next time.
+		for (const [response, rev] of [[result.responses[0], delEventRev], [result.responses[1], eventRev]]) {
+			if (response && response.next && rev !== '' && rev < lastRevNumber) {
+				lastRevNumber = rev;
+			}
+		}
 		const eventIds = [];
 		const newOrChangedEventIds = [];
 		const deletedEventIds = [];
@@ -242,8 +249,9 @@ function createCommands({db, call, rem, log = console}) {
 		try {
 			const got = newOrChangedEventIds && newOrChangedEventIds.length ? await db.get(newOrChangedEventIds) :
 				{returnValue: true};
-			const times = await rem.reminderTimes({returnValue: got.returnValue, results: got.results, lastRevNumber});
-			await rem.saveLastRevNumber({lastRevNumber: times.lastRevNumber || lastRevNumber, status});
+			await rem.reminderTimes({returnValue: got.returnValue, results: got.results, lastRevNumber});
+			// Bug 8: the revision of what was read, not that of the events as got again after it (they can be newer).
+			await rem.saveLastRevNumber({lastRevNumber, status});
 		} catch (e) {
 			log.error('rmdrsvc: onDBChanged: could not save the revision: ' + ((e && e.message) || e));
 			rem.markFailed();

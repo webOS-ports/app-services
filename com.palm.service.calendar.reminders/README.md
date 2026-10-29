@@ -82,10 +82,9 @@ these numbers):
    results array instead of on its record, so it never cancels them.
    Harmless: they are created again with `replace`, which takes their
    place.
-8. The revision reached is the highest `_rev` of the events read, which can
-   jump past events not read: more than 500 changes at once (db8's page),
-   or the deleted ones' revision ahead of the changed ones'.
-10. `onInit` reads the first 500 events only (db8's page).
+10. `onInit` reads the first 500 events only (db8's page). Harmless: the
+    others have later revisions, so the db watch fires at once and
+    `onDBChanged` reads them.
 12. mojoservice made an activity for each call that brought none, and left
     the ones of `onWake`, `onAutoClose` and `onDBChanged` behind.
 
@@ -150,6 +149,12 @@ Mended since the first version:
    such a zone seen from a device in another zone, or one in another zone
    seen from such a device, repeated an hour off half the year. Both kinds
    of year are read now.
+8. The revision a run got to was the highest `_rev` of the events read,
+   which could jump past events not read: more than 500 changes at once
+   (db8's page) with deletions after them, or events changed while the run
+   got the others again (the revisions of those, newer, were taken). Those
+   events never got their reminders. Now a list db8 cut at its page ends
+   the revision there, and the revision is that of the lists read.
 
 These things deliberately differ from the old service:
 
