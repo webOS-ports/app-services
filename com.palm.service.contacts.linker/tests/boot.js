@@ -52,6 +52,8 @@ async function boot({completeFails = false, adopt = 'now'} = {}) {
 	const calls = [];
 	let pending = 0, last = Date.now();
 	let handOver = null;
+	// db8 calls in flight at once, the most seen (the rankers' reads overlap).
+	let dbNow = 0, dbMost = 0;
 
 	async function onCall(uri, args) {
 		pending++;
@@ -60,7 +62,15 @@ async function boot({completeFails = false, adopt = 'now'} = {}) {
 			const [, service, method] = /^luna:\/\/([^/]+)\/(.+)$/.exec(uri);
 			calls.push({service, method, args});
 			if (service === 'com.palm.db') {
-				return await db.handle(method, args);
+				dbNow++;
+				dbMost = Math.max(dbMost, dbNow);
+				try {
+					// A turn of the event loop, as a reply over the bus takes at least.
+					await new Promise(r => setImmediate(r));
+					return await db.handle(method, args);
+				} finally {
+					dbNow--;
+				}
 			}
 			if (service === 'com.palm.systemservice' && method === 'getPreferences') {
 				return {returnValue: true, locale: {languageCode: 'en', countryCode: 'us'}};
@@ -141,6 +151,12 @@ async function boot({completeFails = false, adopt = 'now'} = {}) {
 	return {db, calls, ask, send, settle, persons, personOf, putContacts, service, pb,
 		handOver(event) {
 			handOver(event);
+		},
+		get dbMost() {
+			return dbMost;
+		},
+		resetDbMost() {
+			dbMost = 0;
 		},
 		stop() {
 			if (service.bus.stop) {
