@@ -51,9 +51,6 @@ own test. These are the ones that are still there (the code and tests refer to
 them by these numbers):
 
 - Q7.4: `setupWatch` always fails: it calls a function that was renamed.
-- Q7.5: `saveNewPersonAndContacts` takes out the contacts that have an
-  `_id` by splicing while it loops, so a contact with an `_id` that follows
-  another one gets a new id instead of its own.
 - Q7.8: `performedUnlink` over the bus always fails: it wants the
   framework's person object.
 - Q7.9: `getManualLinks` / `getUnlinkLinks` over the bus never work: with

@@ -19,9 +19,6 @@
 	- the reply lists the contacts that got an id here, as the framework
 	  shows a contact: every field, with its default when missing
 
-	Kept from the old code: the loop that takes out the contacts with an
-	_id skips the one after each it takes out (README: Q7.5).
-
 	Not kept: the old code wrote the framework's own Address object, its
 	internals and all, as organizations[].location; this writes the address.
 */
@@ -222,19 +219,20 @@ function createSaveNew({db, call, persons, model}) {
 		if (!contacts.length) {
 			throw new Error('There must be contacts in the param to use _savePersonAttachingTheseContacts');
 		}
-		const ids = [], toSave = [];
-		for (let i = 0; i < contacts.length; i += 1) {
-			if (contacts[i]._id) {
-				ids.push(contacts[i]._id);
-				toSave.push(contacts[i]);
-				contacts.splice(i, 1);
-			}
-		}
-		const reserved = await db.reserveIds(contacts.length);
-		if (reserved.length !== contacts.length) {
+		/*
+			The contacts that have an _id first, in their order, then the others
+			with reserved ids. The old code took the first out by splicing as it
+			looped, which skipped the one after each: a contact with an _id
+			right after another got a new id (README: Q7.5).
+		*/
+		const toSave = contacts.filter(c => c._id);
+		const ids = toSave.map(c => c._id);
+		const fresh = contacts.filter(c => !c._id);
+		const reserved = await db.reserveIds(fresh.length);
+		if (reserved.length !== fresh.length) {
 			throw new Error('_savePersonAttachingTheseContacts failed because there were not enough reserved ids return to give to all the contacts');
 		}
-		contacts.forEach((c, i) => {
+		fresh.forEach((c, i) => {
 			c._id = reserved[i];
 			ids.push(reserved[i]);
 			toSave.push(c);
@@ -243,14 +241,14 @@ function createSaveNew({db, call, persons, model}) {
 			await persons.reloadContacts(person);
 		}
 		person.rec.contactIds = ids;
-		const from = person.contacts.concat(contacts);
+		const from = person.contacts.concat(fresh);
 		await persons.fixup(person, {contacts: from, partial: true});
 		markTaken(person, from);
 		await persons.save(person);
 		for (const c of toSave) {
 			await saveContact(c);
 		}
-		return {saveResult: true, person: personShown(person), contacts: contacts.map(shown)};
+		return {saveResult: true, person: personShown(person), contacts: fresh.map(shown)};
 	};
 }
 
