@@ -427,7 +427,9 @@ function createCommands({db, call, persons, photos, prefs, model, G, log = conso
 				params.photoId + ' on the contact with id ' + contact._id);
 			return '';
 		}
-		const cropInfo = thePhoto.cropInfo ? thePhoto.cropInfo : {window: {focusX: 0.5, focusY: 0.5}, scale: 1.0};
+		// No crop of its own: the middle, at scale 1, which copies the photo as it is. The old default
+		// put the focus in a "window" the croppers did not read, so the image service had none (C10).
+		const cropInfo = thePhoto.cropInfo ? thePhoto.cropInfo : {focusX: 0.5, focusY: 0.5, scale: 1.0};
 		const result = await photos.setCroppedPhoto(contact, thePhoto.value, cropInfo, thePhoto.type);
 		if (typeof result === 'string' && result.length > 0) {
 			return photos.saveContact(contact);

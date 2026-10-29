@@ -93,9 +93,10 @@ test. The old service's bugs, by number:
   hand (no `$activity`) it writes them and then fails with a `TypeError`
   on the missing activity. It now writes only the keys that change, and
   by hand answers `true` once they are written.
-- C10: `refetchPhoto`'s default crop for a photo with no `cropInfo` has
-  the wrong shape: the image service is sent no focus and a scale of
-  `null`.
+- C10 (mended): `refetchPhoto`'s default crop for a photo with no
+  `cropInfo` has the wrong shape: the image service is sent no focus and
+  a scale of `null`. It is now sent the middle (0.5, 0.5) at scale 1, as
+  the old code meant.
 - C11: `preBackup` lists the photos of the first 500 Palm Profile contacts
   only, and an empty path for every photo without a value.
 - C12: `findPersonByPhone` searches for the normalised form

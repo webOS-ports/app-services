@@ -360,6 +360,22 @@ describe('com.palm.service.contacts', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
+	it('refetchPhoto with no crop of its own copies the photo at scale 1, from the middle (C10)', async () => {
+		const env = await boot();
+		await env.db.put([{_id: 'c1', _kind: 'com.palm.contact.google:1', accountId: 'acct-g',
+			photos: [{_id: 'ph1', value: '/o.jpg', type: 'type_big'}]},
+		{_id: 'c2', _kind: 'com.palm.contact.palmprofile:1', accountId: 'acct-p',
+			photos: [{_id: 'ph2', value: '/p.jpg', type: 'type_square'}]}]);
+		await env.ask('refetchPhoto', {contactId: 'c1', photoId: 'ph1'});
+		await env.ask('refetchPhoto', {contactId: 'c2', photoId: 'ph2'});
+		const sent = env.of('com.webos.service.image', 'convert').map(c => c.args);
+		assert.equal(sent.length, 2);
+		for (const a of sent) {
+			assert.deepEqual([a.focusX, a.focusY, a.scale], [0.5, 0.5, 1]);
+		}
+		env.stop();
+	});
+
 	it('deleteContactImage removes a contact photo, and nothing outside the photo directory (C3)', async () => {
 		const dir = tmpDir();
 		const photos = path.join(dir, '.contactphotos');
