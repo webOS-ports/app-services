@@ -429,11 +429,13 @@ function createRankers({db, persons, model, G, clb, linkHash}) {
 		(5eb34f6). That service let them add to one set of weights, so ties
 		went by which db8 reply came back first (README). Here each adds to
 		its own, and those are added up in a fixed order, name, phone, email,
-		IM: the weights are the ones running them one after the other gives,
-		and so is the error, the first in that order.
+		IM, then the manual links, which need only the contact and so run
+		with them: the weights are the ones running them one after the other
+		gives, and so is the error, the first in that order. The manual
+		unlinks go through the persons found, so they come after.
 	*/
 	async function rank(person, contact) {
-		const outcomes = await Promise.allSettled([similarName, similarPhoneNumber, similarEmail, similarIM]
+		const outcomes = await Promise.allSettled([similarName, similarPhoneNumber, similarEmail, similarIM, manualLinks]
 			.map(async ranker => {
 				const own = {};
 				await ranker(person, contact, own);
@@ -451,7 +453,6 @@ function createRankers({db, persons, model, G, clb, linkHash}) {
 				weights[id] = unit;
 			}
 		}
-		await manualLinks(person, contact, weights);
 		await manualUnlinks(person, contact, weights);
 		return weights;
 	}

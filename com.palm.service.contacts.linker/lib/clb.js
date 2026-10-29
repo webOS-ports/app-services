@@ -138,12 +138,12 @@ function createClb({db, linkHash}) {
 		return {msg: 'Done in clb'};
 	}
 
-	// The records of a kind that name this contact: those with it as A, then those with it as B.
+	// The records of a kind that name this contact: those with it as A, then those with it as B (one batch).
 	async function linksOf(kind, contact) {
 		const hash = (await linkHash.linkHash(contact)).linkHash;
-		const a = await db.findPage({from: kind, where: [{prop: 'contactEntityA', op: '=', val: hash}]});
-		const b = await db.findPage({from: kind, where: [{prop: 'contactEntityB', op: '=', val: hash}]});
-		return {results: a.results.concat(b.results)};
+		const [a, b] = await db.batch(['contactEntityA', 'contactEntityB'].map(prop => ({method: 'find',
+			params: {query: {from: kind, where: [{prop, op: '=', val: hash}]}}})));
+		return {results: ((a && a.results) || []).concat((b && b.results) || [])};
 	}
 
 	// Not Errors: the old code failed with these objects, and the reply says so.

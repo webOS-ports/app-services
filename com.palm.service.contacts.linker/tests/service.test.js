@@ -329,6 +329,22 @@ describe('the linker', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
+	it('forceAutolink reads the sort order once, and the manual links of a contact in one call', async () => {
+		const env = await boot();
+		await env.putContacts([name('Ann', 'Lee'), name('Bob', 'Ray'), name('Cy', 'Day')]);
+		await env.ask('forceAutolink');
+		env.calls.length = 0;
+		await env.ask('forceAutolink');
+		const prefs = env.calls.filter(c => c.method === 'find' && c.args.query.from === 'com.palm.app.contacts.prefs:1');
+		assert.equal(prefs.length, 1);
+		const alone = env.calls.filter(c => c.method === 'find' && c.args.query.from === 'com.palm.manualLink:1');
+		assert.equal(alone.length, 0);
+		const batched = env.calls.filter(c => c.method === 'batch' &&
+			c.args.operations.some(o => o.params.query.from === 'com.palm.manualLink:1'));
+		assert.equal(batched.length, 3);
+		env.stop();
+	});
+
 	it('forceAutolink links every contact, not only the first page of 500', async () => {
 		const env = await boot();
 		const list = [name('Ann', 'Lee')];
@@ -471,8 +487,11 @@ describe('the manual unlink lookups', {skip: NO_FRAMEWORKS}, () => {
 		const r = await env.ask('dbUpdatedRelinkChanges', {revChangedStart: env.db.records.get(x._id)._rev - 1});
 		assert.equal(r.returnValue, false);
 		assert.match(r.errorText, /getAccountInfo \{"accountId":"acct-none"\}: no account acct-none$/);
-		assert.ok(env.calls.some(c => c.method === 'find' && c.args.query.from === 'com.palm.manualUnlink:1' &&
-			c.args.query.where[0].val === 'Local|R7'), 'no unlink lookup for the contact after the failing one');
+		// The finds made, alone or in a batch.
+		const finds = [].concat(...env.calls.map(c => (c.method === 'find' ? [c.args.query] :
+			c.method === 'batch' ? c.args.operations.filter(o => o.method === 'find').map(o => o.params.query) : [])));
+		assert.ok(finds.some(q => q.from === 'com.palm.manualUnlink:1' && q.where[0].val === 'Local|R7'),
+			'no unlink lookup for the contact after the failing one');
 		env.stop();
 	});
 });
