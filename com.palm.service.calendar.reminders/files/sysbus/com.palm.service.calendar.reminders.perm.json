@@ -2,8 +2,10 @@
 	"com.palm.service.calendar.reminders": [ 
 		"activity.operation",
 		"activity.query",
+		"application.launcher",
 		"calendarremindersservice.operation",
 		"database.operation",
-		"filecache.operation"
+		"filecache.operation",
+		"time.query"
 	]
 }
