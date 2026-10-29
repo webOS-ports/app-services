@@ -140,11 +140,12 @@ describe('com.palm.service.contacts', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
-	it('exports one person as a 3.0 vCard', async () => {
+	it('exports one person as a 3.0 vCard, each URL with its own label (C7)', async () => {
 		const env = await boot();
 		const dir = tmpDir();
 		await env.db.put([person('p1', {phoneNumbers: [{value: '(408) 555-1234', type: 'type_mobile'}],
-			emails: [{value: 'a@b.com', type: 'type_work'}], urls: [{value: 'http://w', type: 'type_work'}]})]);
+			emails: [{value: 'a@b.com', type: 'type_work'}], urls: [{value: 'http://w', type: 'type_work'},
+			{value: 'http://h', type: 'type_home'}, {value: 'http://o', type: 'type_other'}]})]);
 		const file = path.join(dir, 'one.vcf');
 		assert.deepEqual(await env.ask('vCardExportOne', {filePath: file, personId: 'p1'}),
 			{success: true, filePath: file, returnValue: true});
@@ -152,8 +153,7 @@ describe('com.palm.service.contacts', {skip: NO_FRAMEWORKS}, () => {
 		assert.match(text, /^BEGIN:VCARD\r\nVERSION:3\.0\r\nN:Lee;Ann;;;\r\nFN:Ann Lee\r\n/);
 		assert.match(text, /TEL;TYPE=CELL,VOICE:\(408\) 555-1234\r\n/);
 		assert.match(text, /EMAIL;TYPE=WORK,INTERNET:a@b\.com\r\n/);
-		// The URL labels are off by one: a work URL says HOME (README.md).
-		assert.match(text, /URL;TYPE=HOME:http:\/\/w\r\n/);
+		assert.match(text, /\r\nURL;TYPE=WORK:http:\/\/w\r\nURL;TYPE=HOME:http:\/\/h\r\nURL:http:\/\/o\r\n/);
 		assert.match(text, /END:VCARD\r\n\r\n$/);
 		env.stop();
 	});

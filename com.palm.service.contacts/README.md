@@ -83,8 +83,9 @@ test. The old service's bugs, by number:
 - C6 (mended): `vCardExportOne` and `vCardExportAll` always write vCard
   3.0: the service passed `vCardVersion`, the exporter read `version`.
   `vCardVersion: "2.1"` now writes the exporter's 2.1 card.
-- C7: the vCard URL labels are off by one: a work URL is labelled `HOME`,
-  a home URL `TYPE=` with no label.
+- C7 (mended): the vCard URL labels are off by one: a work URL is
+  labelled `HOME`, a home URL `TYPE=` with no label. A work URL is now
+  `WORK`, a home one `HOME`, and one with no label is written `URL:`.
 - C8: `findPersonByPhone` with `returnAllMatches` lists the worst match
   first.
 - C9: `sortOrderChanged` reads the persons without their `sortKey`, so it
