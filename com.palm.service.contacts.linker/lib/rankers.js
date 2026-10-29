@@ -17,9 +17,6 @@
 
 	A person at 100 or more is linked with the contact.
 
-	As the old service did, quirks included:
-	- the phone number queries all share one condition, so every one of them
-	  asks for the last mobile number's value (README: Q7.14)
 */
 
 const {DEFAULTS, entries, contactName, normalizeLower} = require('./model');
@@ -134,27 +131,41 @@ function createRankers({db, persons, model, G, clb, linkHash}) {
 		return out;
 	}
 
+	/*
+		The persons a mobile number is looked up in: those with a number whose
+		normalised value starts with this one's digits, as the phone app looks
+		up a caller: "-<the number's digits, reversed>", the search form
+		without its closing "-". 408-555-1234 is stored as "-4321555804--1-+"
+		and looked up as "-4321555804". The old service looked it up by
+		Globalization's subscriber number, "-4321555-", which is not a prefix
+		of what phonenumberlib stores, so 10-digit US numbers and NL mobile
+		numbers never found anyone (README: Q7.15); and its queries shared one
+		condition, so each asked for the last mobile number (Q7.14). A value
+		with no digits is not looked up.
+	*/
+	function lookupKey(value) {
+		if (typeof value !== 'string') {
+			return null;
+		}
+		const key = model.normalizePhoneNumber(value, true).slice(0, -1);
+		return /^-\d+$/.test(key) ? key : null;
+	}
+
 	async function similarPhoneNumber(person, contact, weights) {
 		const parsed = {};
 		const numbers = (person ? person.rec.phoneNumbers : []).concat(entries(contact, 'phoneNumbers', DEFAULTS.phone));
-		// One condition object for all the queries, as the old code's shallow copy had it.
-		const shared = {prop: 'phoneNumbers.normalizedValue', op: '%'};
 		const queries = [];
 		for (const n of numbers) {
 			if (n.type !== MOBILE || parsed[n.value]) {
 				continue;
 			}
 			const p = G.Phone.parsePhoneNumber(n.value);
-			let found;
-			if (p) {
-				const norm = model.normalizePhoneNumber(p, true);
-				if (norm) {
-					shared.val = norm;
-					queries.push({method: 'find', params: {query: {from: KIND, where: [shared]}}});
-					found = p;
-				}
+			const key = p ? lookupKey(n.value) : null;
+			if (key) {
+				queries.push({method: 'find', params: {query: {from: KIND,
+					where: [{prop: 'phoneNumbers.normalizedValue', op: '%', val: key}]}}});
 			}
-			parsed[n.value] = found;
+			parsed[n.value] = key ? p : undefined;
 		}
 		if (!queries.length) {
 			return;
