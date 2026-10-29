@@ -74,7 +74,9 @@ function createReminders({db, call, events, log = console}) {
 			if (displayAlarmIndex === null) {
 				return null;
 			}
-			if (event.dtend < now && !event.rrule) {
+			// Bug 9: an event with no end lasts no time (its reminder had no end, and onWake failed on it).
+			const dtend = (event.dtend === undefined || event.dtend === null) ? event.dtstart : event.dtend;
+			if (dtend < now && !event.rrule) {
 				return null;
 			}
 			if (eventDismissed && !event.rrule) {
@@ -96,7 +98,7 @@ function createReminders({db, call, events, log = console}) {
 			const alarmTime = calculateAlarmTime(startTime, event.alarm[displayAlarmIndex]);
 			const showTime = (alarmTime < now && startTime >= now) ? startTime : alarmTime;
 			// Kept open at least 15 minutes.
-			const duration = event.dtend - event.dtstart;
+			const duration = dtend - event.dtstart;
 			const autoCloseTime = (duration < 900000) ? (startTime + 900000) : (startTime + duration);
 			const shouldBeShowingNow = (!eventDismissed && now >= showTime && now <= autoCloseTime);
 			if (!(showTime >= now || shouldBeShowingNow)) {
