@@ -337,3 +337,18 @@ test('B5: new credentials: onCredentialsChanged to the template and the provider
 		assert.deepStrictEqual(s.callsTo('com.test.mail/').map(c => c.method).sort(), ['onCapabilitiesChanged', 'onCredentialsChanged', 'onEnabled']);
 	});
 });
+
+test('B6: modifyAccount: each onEnabled call names its own provider', async () => {
+	const TWO = {templateId: 'com.test.two', loc_name: 'Two', writePermissions: ['com.test.*'], capabilityProviders: [
+		{id: 'com.test.two.a', capability: 'MAIL', onEnabled: 'palm://com.test.two/aEnabled'},
+		{id: 'com.test.two.b', capability: 'CONTACTS', onEnabled: 'palm://com.test.two/bEnabled'}]};
+	await withService({templates: {'com.test.two': TWO}}, async s => {
+		const id = (await s.ask('createAccount', {templateId: 'com.test.two', username: 'two@example.org', capabilityProviders: []}, APP)).result._id;
+		await new Promise(res => setTimeout(res, 1200));
+		await s.settle();
+		const r = await s.ask('modifyAccount', {accountId: id, object: {capabilityProviders: [{id: 'com.test.two.a'}, {id: 'com.test.two.b'}]}}, APP);
+		assert.deepStrictEqual(r, {returnValue: true});
+		assert.deepStrictEqual(s.callsTo('com.test.two/').map(c => c.method + ' ' + c.args.capabilityProviderId).sort(),
+			['aEnabled com.test.two.a', 'bEnabled com.test.two.b']);
+	});
+});

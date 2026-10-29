@@ -472,13 +472,14 @@ function createCommands({db, pc, keystore, templates, reloadTemplates, log = con
 			// onEnabled true / false to the providers turned on / off.
 			if (changed) {
 				const transports = [];
-				// B6: one params object per list, so each call carries the last id given to it.
+				// Each call its own arguments. (The old code gave the calls of one list the same
+				// object, so each named the last provider of that list: README, B6.)
 				const toBusCalls = params => id => {
 					if (template) {
 						const provider = _.detect(template.capabilityProviders, c => c.id === id);
 						if (provider && provider.onEnabled) {
-							params.capabilityProviderId = id;
-							transports.push({address: provider.onEnabled, params, capabilityProviderId: provider.id});
+							transports.push({address: provider.onEnabled, params: Object.assign({}, params, {capabilityProviderId: id}),
+								capabilityProviderId: provider.id});
 						}
 					}
 				};
