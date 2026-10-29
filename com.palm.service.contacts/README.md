@@ -59,7 +59,7 @@ test. The old service's bugs, by number:
   An account with no contacts kind answers `NO_PROVIDER_FOR_CONTACTS` with
   no `errorText` (the error was a plain object), and `exception`
   `"[object Object]"`.
-- C2: `importVCard` never answers (until its 3600 s timeout) when the
+- C2 (mended): `importVCard` never answers (until its 3600 s timeout) when the
   default account cannot be read, or a contact cannot be saved; `readVCard`
   and `importVCard` the same when a card after the first cannot be read.
 - C3: `deleteContactImage` never deletes: with a path it fails with
