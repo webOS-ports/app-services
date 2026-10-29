@@ -1,5 +1,6 @@
 {
 	"com.palm.service.contacts.linker": [ 
+		"accountsservice.management",
 		"activity.operation",
 		"activity.query",
 		"contactslinkerservice.operation",
