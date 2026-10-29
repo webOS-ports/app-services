@@ -62,9 +62,12 @@ test. The old service's bugs, by number:
 - C2 (mended): `importVCard` never answers (until its 3600 s timeout) when the
   default account cannot be read, or a contact cannot be saved; `readVCard`
   and `importVCard` the same when a card after the first cannot be read.
-- C3: `deleteContactImage` never deletes: with a path it fails with
+- C3 (mended): `deleteContactImage` never deletes: with a path it fails with
   `"webOS is not defined"` (it called a Triton-only function), without one
-  it never answers until its 60 s timeout.
+  it never answers until its 60 s timeout. It now removes the file, but
+  only one in `/media/internal/.contactphotos/` (where the service crops
+  Palm Profile photos), as the service runs as root; any other path fails
+  with `NOT_A_CONTACT_PHOTO`. No path answers `{}` at once.
 - C4: a phone number, email or IM with no `favoriteData` of its own shares
   one default object with every other such point, for as long as the
   service runs. A default set on one is set on all of them; the clean-up of

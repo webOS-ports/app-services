@@ -309,21 +309,30 @@ describe('com.palm.service.contacts', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
-	it('deleteContactImage fails before it deletes anything', async () => {
-		const env = await boot();
+	it('deleteContactImage removes a contact photo, and nothing outside the photo directory (C3)', async () => {
 		const dir = tmpDir();
-		fs.writeFileSync(path.join(dir, 'i.jpg'), 'x');
-		assert.equal((await env.ask('deleteContactImage', {path: dir + '/i.jpg'})).errorText,
-			'MojoService: no errorCode supplied webOS is not defined');
-		assert.ok(fs.existsSync(path.join(dir, 'i.jpg')));
+		const photos = path.join(dir, '.contactphotos');
+		fs.mkdirSync(photos);
+		fs.writeFileSync(path.join(photos, 'i.jpg'), 'x');
+		fs.writeFileSync(path.join(dir, 'o.jpg'), 'x');
+		fs.mkdirSync(photos + '-not');
+		fs.writeFileSync(photos + '-not/o.jpg', 'x');
+		const env = await boot({photoDir: photos});
+		assert.deepEqual(await env.ask('deleteContactImage', {path: photos + '/i.jpg'}), {returnValue: true});
+		assert.ok(!fs.existsSync(path.join(photos, 'i.jpg')));
+		for (const p of [dir + '/o.jpg', photos + '/../o.jpg', photos + '-not/o.jpg']) {
+			const r = await env.ask('deleteContactImage', {path: p});
+			assert.equal(r.returnValue, false);
+			assert.equal(r.errorCode, 'NOT_A_CONTACT_PHOTO');
+		}
+		assert.ok(fs.existsSync(path.join(dir, 'o.jpg')) && fs.existsSync(photos + '-not/o.jpg'));
+		assert.equal((await env.ask('deleteContactImage', {path: photos + '/gone.jpg'})).returnValue, false);
 		env.stop();
 	});
 
-	it('deleteContactImage with no path answers only when the command times out', async () => {
+	it('deleteContactImage with no path answers at once (C3)', async () => {
 		const env = await boot({timeoutsS: {deleteContactImage: 1}});
-		const r = await env.ask('deleteContactImage', {});
-		assert.equal(r.errorCode, 504);
-		assert.equal(r.errorText, 'commandTimeout in com.palm.service.contacts/deleteContactImage');
+		assert.deepEqual(await env.askWithin(500, 'deleteContactImage', {}), {returnValue: true});
 		env.stop();
 	});
 

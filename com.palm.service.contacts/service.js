@@ -47,9 +47,11 @@ async function locale(call, log) {
 /*
 	start({palmbus, ...}): the service on that bus. frameworksRoot is where
 	globalization and phonenumberlib are (the device's /usr/palm/frameworks
-	by default). now and timeoutsS ({method: seconds}) are for tests.
+	by default). now, timeoutsS ({method: seconds}) and photoDir (where
+	deleteContactImage may remove photos) are for tests.
 */
-async function start({palmbus, exit, idleMs, log = console, frameworksRoot, now, timeoutsS} = {}) {
+async function start({palmbus, exit, idleMs, log = console, frameworksRoot, now, timeoutsS,
+	photoDir} = {}) {
 	const bus = createBus({palmbus, name: NAME, exit, idleMs, log});
 	const call = palmCall(Object.assign((uri, args, opts) => bus.call(uri, args, opts), {subscribe: bus.subscribe}));
 	// The methods answer from the start; a call that comes in while the frameworks load waits.
@@ -63,7 +65,7 @@ async function start({palmbus, exit, idleMs, log = console, frameworksRoot, now,
 		const persons = createPersons({db, model, linkHash});
 		const photos = createPhotos({call, db, log, now});
 		const prefs = createPrefs({db, log});
-		const methods = createCommands({db, call, persons, photos, prefs, model, G, log, timeoutsS});
+		const methods = createCommands({db, call, persons, photos, prefs, model, G, log, timeoutsS, photoDir});
 		log.log(NAME + ': up (' + Object.keys(methods).length + ' methods, ' + language + '_' + region + ', node ' +
 			process.version + ')');
 		return methods;

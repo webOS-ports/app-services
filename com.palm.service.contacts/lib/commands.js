@@ -28,11 +28,13 @@
 */
 
 const fs = require('fs');
+const nodePath = require('path');
 const mojo = require('./mojo');
 const {isObject, entry, clone, PERSON_KIND, CONTACT_KIND} = require('./records');
 const vcard = require('./vcard');
 const {SUPPORTED_FAVORITE_TYPES} = require('./person');
 const {KIND: PREFS_KIND, PREF} = require('./prefs');
+const {MEDIA_DIR} = require('./photos');
 
 const SERVICE = 'com.palm.service.contacts';
 const VERSION = '1.0';
@@ -62,11 +64,6 @@ function require_(ok, message) {
 
 function requireString(v, message) {
 	require_(typeof v === 'string' || v instanceof String, message);
-}
-
-// What never settles: a chain of futures the old code left without a result.
-function never() {
-	return new Promise(() => {});
 }
 
 // ContactsServiceAssistant.getPathFromFileTypeSchemaPath.
@@ -132,7 +129,8 @@ function batchWriter(db, log, {deep = false, size = 500} = {}) {
 	return {write, commit};
 }
 
-function createCommands({db, call, persons, photos, prefs, model, G, log = console, timeoutsS = {}}) {
+function createCommands({db, call, persons, photos, prefs, model, G, log = console, timeoutsS = {},
+	photoDir = MEDIA_DIR}) {
 	const exporter = vcard.createExporter({model});
 
 	// ---- backup
@@ -423,12 +421,27 @@ function createCommands({db, call, persons, photos, prefs, model, G, log = conso
 		return result;
 	}
 
-	// IO.Posix.unlink was a Triton call: in node it fails before anything is deleted (README.md).
+	/*
+		The contact photo at path removed (C3). Only a file the service
+		itself cropped, in photoDir, is removed: the service runs as root and
+		the old one would have removed whatever it was given. No path answers
+		at once with nothing done.
+	*/
 	async function deleteContactImage(params) {
-		if (params.path) {
-			throw new ReferenceError('webOS is not defined');
+		const p = params.path;
+		if (!p) {
+			return {};
 		}
-		return never();
+		requireString(p, 'deleteContactImage: path is not a string');
+		const file = nodePath.resolve(p.indexOf(FILE_SCHEMA) === 0 ? p.substr(FILE_SCHEMA.length) : p);
+		const dir = nodePath.resolve(photoDir) + '/';
+		if (file.indexOf(dir) !== 0) {
+			const e = new Error('deleteContactImage: ' + p + ' is not a contact photo in ' + dir);
+			e.errorCode = 'NOT_A_CONTACT_PHOTO';
+			throw e;
+		}
+		await fs.promises.unlink(file);
+		return {};
 	}
 
 	// ---- phone numbers
