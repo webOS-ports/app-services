@@ -139,14 +139,18 @@ function createCommands({db, call, persons, photos, prefs, model, G, log = conso
 		const r = await call(ACCOUNTS + '/listAccounts', {templateId: PALM_PROFILE});
 		const account = r.results[0];
 		require_(account !== undefined, 'ContactsService.photoPreBackup - There were no palm profile accounts in the account list');
-		// Contact.getContactsByAccountId: one page of them.
+		// Contact.getContactsByAccountId: all of them (C11: only the first page of 500 was read).
 		requireString(account._id, 'Contact.getContactsByAccountId requires an accountId that is a valid string');
-		const found = await db.findPage({from: CONTACT_KIND, where: [{prop: 'accountId', op: '=', val: account._id}]});
+		const found = await db.find({from: CONTACT_KIND, where: [{prop: 'accountId', op: '=', val: account._id}]});
 		const files = [];
-		for (const contact of found.results) {
+		for (const contact of found) {
 			// The original photo, not the cached copy: it can be cropped again after a restore.
 			for (const p of list(contact.photos)) {
-				files.push(entry(p, 'ContactPhoto').value);
+				const value = entry(p, 'ContactPhoto').value;
+				// A photo with no file has nothing to back up (C11: it was listed as "").
+				if (value) {
+					files.push(value);
+				}
 			}
 		}
 		return {version: VERSION, description: 'Backup of ' + files.length + ' palm profile contact photos.', files,
