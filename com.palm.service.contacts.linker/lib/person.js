@@ -146,7 +146,9 @@ function createPersons({db, call, model, G, linkHash, log = console}) {
 		The favourite backups of every contact of these persons; a contact whose
 		hash or lookup fails counts as having none. The contacts are the ones the
 		persons were just loaded with, when they have them all (only their link
-		hashes are needed), else read again.
+		hashes are needed), else read again. The backups of all the hashes are
+		read with one find (db8 gives each hash's in the order a find of that
+		hash alone does), not one find for each contact.
 	*/
 	async function favoriteBackupsFor(people) {
 		const ids = Array.from(new Set([].concat(...people.map(p => p.rec.contactIds))));
@@ -157,9 +159,37 @@ function createPersons({db, call, model, G, linkHash, log = console}) {
 			}
 		}
 		const contacts = ids.every(id => loaded.has(id)) ? ids.map(id => loaded.get(id)) : await getContacts(ids);
-		return Promise.all(contacts.map(async c => {
+		const FAILED = {};
+		const hashes = await Promise.all(contacts.map(async c => {
 			try {
-				return await favoriteBackupForHash((await linkHash.linkHash(c)).linkHash);
+				return (await linkHash.linkHash(c)).linkHash;
+			} catch (e) {
+				return FAILED;
+			}
+		}));
+		const wanted = Array.from(new Set(hashes.filter(h => typeof h === 'string')));
+		let byHash = null;
+		if (wanted.length) {
+			try {
+				byHash = new Map();
+				for (const b of await db.find({from: FAVORITE_BACKUP_KIND, where: [{prop: 'contactBackupHash', op: '=', val: wanted}]})) {
+					if (!byHash.has(b.contactBackupHash)) {
+						byHash.set(b.contactBackupHash, b);
+					}
+				}
+			} catch (e) {
+				byHash = null;
+			}
+		}
+		return Promise.all(hashes.map(async h => {
+			if (h === FAILED || (typeof h === 'string' && !byHash)) {
+				return undefined;
+			}
+			if (typeof h === 'string') {
+				return byHash.get(h);
+			}
+			try {
+				return await favoriteBackupForHash(h);
 			} catch (e) {
 				return undefined;
 			}

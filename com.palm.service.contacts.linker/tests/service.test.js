@@ -430,6 +430,26 @@ describe('saveNewPersonAndContacts', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
+	it('restores favourite data from a backup on the second page of a person\'s backups', async () => {
+		// One find reads the backups of all the person's contacts, so more than 500 come in pages.
+		const env = await boot();
+		const ids = Array.from({length: 501}, (_, i) => 'R' + String(i).padStart(3, '0'));
+		const contacts = await env.putContacts(ids.map(remoteId => Object.assign(name('Ann', 'Lee'),
+			{remoteId, emails: [{value: remoteId.toLowerCase() + '@x.org', type: 'type_home'}]})));
+		await env.db.put([{_kind: 'com.palm.person:1', contactIds: contacts.map(c => c._id),
+			names: [{givenName: 'Ann', familyName: 'Lee'}]}]);
+		await env.db.put(ids.map(remoteId => ({_kind: 'com.palm.person.favoritebackup:1', contactBackupHash: 'Local|' + remoteId,
+			defaultPropertyHashes: remoteId === 'R500' ? [{value: b64md5('r500@x.org'),
+				type: 'contact_point_type_emailAddress', favoriteData: {defaultEmail: true}}] : []})));
+		// The last contact alone is relinked: one fixup of the person.
+		const r = await env.ask('dbUpdatedRelinkChanges', {revChangedStart: env.db.records.get(contacts[500]._id)._rev - 1});
+		assert.equal(r, true);
+		const email = env.personOf(contacts[0]._id).emails[0];
+		assert.equal(email.value, 'r500@x.org');
+		assert.deepEqual(email.favoriteData, {defaultEmail: true});
+		env.stop();
+	});
+
 	it('makes the new person a favourite from the backup of a contact it takes in that was saved before', async () => {
 		const env = await boot();
 		const [old] = await env.putContacts([Object.assign(name('Ann', 'Lee'), {remoteId: 'R1'})]);
@@ -524,6 +544,16 @@ describe('saveNewPersonAndContacts', {skip: NO_FRAMEWORKS}, () => {
 });
 
 describe('the manual unlink lookups', {skip: NO_FRAMEWORKS}, () => {
+	it('find an unlink that names the person\'s contact as its second side', async () => {
+		const env = await boot();
+		await env.db.put([{_kind: 'com.palm.manualUnlink:1', contactEntityA: 'Local|R2', contactEntityB: 'Local|R1'}]);
+		const [x, y] = await env.putContacts([Object.assign(name('Ann', 'Lee'), {remoteId: 'R1'}),
+			Object.assign(name('Ann', 'Lee'), {remoteId: 'R2'})]);
+		await env.ask('forceAutolink');
+		assert.notEqual(env.personOf(x._id)._id, env.personOf(y._id)._id);
+		env.stop();
+	});
+
 	it('are made for every contact of the matching persons at once, and the first failure is the answer', async () => {
 		// Autolinker.manualUnlinks ran them through Foundations' mapReduce: all at once, and the
 		// first to fail was the error once all were done. One after the other, a failing first
