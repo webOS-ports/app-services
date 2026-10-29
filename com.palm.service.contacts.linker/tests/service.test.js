@@ -448,6 +448,28 @@ describe('saveNewPersonAndContacts', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
+	it('writes the backup of a speed dial a person has, and drops one that is no longer on a number', async () => {
+		const env = await boot();
+		const [a, b] = await env.putContacts([
+			Object.assign(name('Ann', 'Lee'), {remoteId: 'R1', phoneNumbers: [{value: '5551234', type: 'type_fax'}]}),
+			Object.assign(name('Bob', 'Ray'), {remoteId: 'R2', phoneNumbers: [{value: '5559876', type: 'type_fax'}]})]);
+		await env.ask('forceAutolink');
+		const ann = env.personOf(a._id);
+		await env.db.merge([{_id: ann._id, phoneNumbers: [Object.assign({}, ann.phoneNumbers[0], {speedDial: '3'})]}]);
+		await env.db.put([{_kind: 'com.palm.person.speeddialbackup:1', contactBackupHash: 'Local|R2',
+			speedDials: [{hashedPhoneNumber: b64md5('5550000'), key: '7'}]}]);
+		await env.ask('forceAutolink');
+		const backups = {};
+		for (const r of env.db.records.values()) {
+			if (r._kind === 'com.palm.person.speeddialbackup:1' && !r._del) {
+				backups[r.contactBackupHash] = r.speedDials.map(d => d.key);
+			}
+		}
+		assert.deepEqual(backups, {'Local|R1': ['3']});
+		assert.equal(env.personOf(b._id).phoneNumbers[0].speedDial, '');
+		env.stop();
+	});
+
 	it('keeps the _id of every contact that has one, also of one right after another (README: Q7.5)', async () => {
 		const env = await boot();
 		const [a, b] = await env.putContacts([name('Ann', 'Lee'), name('Bob', 'Kay')]);
