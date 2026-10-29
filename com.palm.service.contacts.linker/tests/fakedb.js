@@ -347,7 +347,9 @@ function createFakeDb({prefix = 'f'} = {}) {
 		});
 		const start = query.page ? Number(query.page) : 0;
 		const limit = query.limit || MAX_PAGE;
-		const slice = list.slice(start, start + limit).map(e => clone(e.r));
+		// select: only those properties, as db8 gives them.
+		const pick = r => (query.select ? Object.fromEntries(query.select.filter(k => k in r).map(k => [k, r[k]])) : r);
+		const slice = list.slice(start, start + limit).map(e => clone(pick(e.r)));
 		const next = start + limit < list.length ? String(start + limit) : undefined;
 		return {results: slice, next};
 	}

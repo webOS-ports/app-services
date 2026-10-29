@@ -62,6 +62,22 @@ function createRankers({db, persons, model, G, clb, linkHash}) {
 		return out;
 	}
 
+	/*
+		The persons a batch of finds found, one for each hit, in order. The
+		finds ask for the _id alone, and each person is then read once. They
+		used to bring the whole person back for every query that found it: a
+		person with many contacts and names came back many times over, and on
+		the VM a reply of 24 MB was more than luna-service takes (it drops
+		the client, and the linker lost db8).
+	*/
+	async function personsFound(queries) {
+		const responses = await db.batch(queries.map(q => ({method: q.method,
+			params: {query: Object.assign({}, q.params.query, {select: ['_id']})}})));
+		const ids = peopleOf(responses).map(r => r._id);
+		const records = new Map((await db.get([...new Set(ids)])).filter(r => r && !r._del).map(r => [r._id, r]));
+		return ids.filter(id => records.has(id)).map(id => JSON.parse(JSON.stringify(records.get(id))));
+	}
+
 	async function similarName(person, contact, weights) {
 		const cname = contactName(contact);
 		const names = (person ? person.rec.names : []).concat([cname]);
@@ -89,7 +105,7 @@ function createRankers({db, persons, model, G, clb, linkHash}) {
 		if (!queries.length) {
 			return;
 		}
-		for (const raw of peopleOf(await db.batch(queries))) {
+		for (const raw of await personsFound(queries)) {
 			const p = persons.wrap(raw);
 			const pname = p.rec.name || {};
 			if (onlyCompany) {
@@ -170,7 +186,7 @@ function createRankers({db, persons, model, G, clb, linkHash}) {
 		if (!queries.length) {
 			return;
 		}
-		const results = peopleOf(await db.batch(queries));
+		const results = await personsFound(queries);
 		const parse = v => {
 			if (!parsed[v]) {
 				parsed[v] = G.Phone.parsePhoneNumber(v);
@@ -217,7 +233,7 @@ function createRankers({db, persons, model, G, clb, linkHash}) {
 			if (!queries.length) {
 				return;
 			}
-			for (const raw of peopleOf(await db.batch(queries))) {
+			for (const raw of await personsFound(queries)) {
 				add(weights, similarity, persons.wrap(raw), true);
 			}
 		};
