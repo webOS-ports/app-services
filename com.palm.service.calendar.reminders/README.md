@@ -82,11 +82,6 @@ these numbers):
    results array instead of on its record, so it never cancels them.
    Harmless: they are created again with `replace`, which takes their
    place.
-4. One event the calendar framework cannot work out (an exception date
-   DateJS cannot parse, a repeating event with no start, an alarm whose
-   value or action is not a string) throws, and all the reminders of that
-   scan are lost; the status is `FAIL`, so every later run starts over and
-   fails on the same event again.
 5. An exception date of a length other than 8, 15 or 16 ends the check of
    the event's other exception dates.
 6. The time zone manager's daylight saving test is `dstStart <= t < dstEnd`,
@@ -133,6 +128,12 @@ Mended since the first version:
    reminder query leaves the activity as it is (status `dbError`), and a
    failed event query in onInit goes on with no events and a `FAIL` status,
    so the next run starts over.
+4. One event the calendar framework could not work out (an exception date
+   DateJS cannot parse, a repeating event with no start, an alarm whose
+   value or action is not a string) threw, and all the reminders of that
+   scan were lost; the status was `FAIL`, so every later run started over
+   and failed on the same event again. Now that event is skipped, and
+   logged.
 
 These things deliberately differ from the old service:
 

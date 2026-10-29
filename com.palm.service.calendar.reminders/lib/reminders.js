@@ -64,34 +64,30 @@ function createReminders({db, call, events, log = console}) {
 		if (eventDismissed && skipPastStartTime) {
 			now = skipPastStartTime + 1000;
 		}
-		await events.findNextOccurrenceTimezonePrep(evs);
-		for (let i = 0; i < eventsLength; i++) {
-			const event = evs[i];
+		// The event's next reminder, or null.
+		function reminderOf(event) {
 			let startTime, isRepeatEvent;
-			if (event._rev > revNumber) {
-				revNumber = event._rev;
-			}
 			if (!event.alarm || event.alarm.length === 0) {
-				continue;
+				return null;
 			}
 			const displayAlarmIndex = findDisplayAlarm(event.alarm);
 			if (displayAlarmIndex === null) {
-				continue;
+				return null;
 			}
 			if (event.dtend < now && !event.rrule) {
-				continue;
+				return null;
 			}
 			if (eventDismissed && !event.rrule) {
-				continue;
+				return null;
 			}
 			if (event.rrule && event.rrule.freq && event.rrule.until && event.rrule.until < now) {
-				continue;
+				return null;
 			}
 			if ((event.rrule && event.rrule.freq) && (!event.rrule.until || (event.rrule.until && event.rrule.until > now))) {
 				startTime = events.findNextOccurrence(event, now);
 				isRepeatEvent = true;
 				if (startTime === false) {
-					continue;
+					return null;
 				}
 			} else {
 				startTime = event.dtstart;
@@ -103,22 +99,41 @@ function createReminders({db, call, events, log = console}) {
 			const duration = event.dtend - event.dtstart;
 			const autoCloseTime = (duration < 900000) ? (startTime + 900000) : (startTime + duration);
 			const shouldBeShowingNow = (!eventDismissed && now >= showTime && now <= autoCloseTime);
-			if (showTime >= now || shouldBeShowingNow) {
-				reminderList.push({
-					_kind: REMINDERS,
-					eventId: event._id,
-					subject: event.subject,
-					location: event.location,
-					isAllDay: event.allDay,
-					attendees: event.attendees,
-					calendarId: event.calendarId,
-					startTime,
-					endTime: startTime + duration,
-					alarmTime,
-					showTime,
-					autoCloseTime,
-					isRepeating: isRepeatEvent
-				});
+			if (!(showTime >= now || shouldBeShowingNow)) {
+				return null;
+			}
+			return {
+				_kind: REMINDERS,
+				eventId: event._id,
+				subject: event.subject,
+				location: event.location,
+				isAllDay: event.allDay,
+				attendees: event.attendees,
+				calendarId: event.calendarId,
+				startTime,
+				endTime: startTime + duration,
+				alarmTime,
+				showTime,
+				autoCloseTime,
+				isRepeating: isRepeatEvent
+			};
+		}
+
+		await events.findNextOccurrenceTimezonePrep(evs);
+		for (let i = 0; i < eventsLength; i++) {
+			const event = evs[i];
+			if (event._rev > revNumber) {
+				revNumber = event._rev;
+			}
+			// Bug 4: an event the rules throw on (an exception date DateJS cannot read, a repeating event with no
+			// start, an alarm that is not a string) loses its own reminder, not the reminders of the whole set.
+			try {
+				const reminder = reminderOf(event);
+				if (reminder) {
+					reminderList.push(reminder);
+				}
+			} catch (e) {
+				log.error('rmdrsvc: event ' + event._id + ' skipped: ' + ((e && e.message) || e));
 			}
 		}
 		return {reminderList, lastRevNumber: revNumber};
@@ -127,9 +142,8 @@ function createReminders({db, call, events, log = console}) {
 	/*
 		Work out the events' next reminders and store them. -> {returnValue,
 		lastRevNumber, status: "OK" | "FAIL"}, or {returnValue: true} for no
-		events. Any failure on the way (an event the framework's rules throw
-		on, a failed put) drops the reminders of every event in the set and
-		marks the status FAIL (README.md).
+		events. A failed put drops the reminders of every event in the set and
+		marks the status FAIL.
 	*/
 	async function reminderTimes(result) {
 		if (result.returnValue === false) {
