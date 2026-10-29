@@ -700,10 +700,12 @@ function createTimezoneManager({call, subscribe, log = console}) {
 		}
 		if (!tzInfo.hasDstChange) {
 			return tzInfo.utcOffset;
-		} else if (timestampNoMillis >= tzInfo.dstStart && timestampNoMillis < tzInfo.dstEnd) {
-			return tzInfo.dstOffset;
 		}
-		return tzInfo.utcOffset;
+		// Bug 6: where summer time spans the new year it starts after it ends in the year's rules.
+		const inDst = tzInfo.dstStart <= tzInfo.dstEnd ?
+			(timestampNoMillis >= tzInfo.dstStart && timestampNoMillis < tzInfo.dstEnd) :
+			(timestampNoMillis >= tzInfo.dstStart || timestampNoMillis < tzInfo.dstEnd);
+		return inDst ? tzInfo.dstOffset : tzInfo.utcOffset;
 	}
 
 	function convertTime(timestamp, srcTz, destTz) {

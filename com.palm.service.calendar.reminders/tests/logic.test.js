@@ -172,12 +172,20 @@ describe('calendar: findNextOccurrence', () => {
 			Date.UTC(2026, 6, 1, 6));
 	});
 
-	it('old bug 6: where summer time spans the new year, the time zone manager never sees it', async () => {
+	it('bug 6: summer time that spans the new year (Sydney)', async () => {
 		await em.findNextOccurrenceTimezonePrep([ev({tzId: 'Australia/Sydney', dtstart: now, dtend: now + MIN,
 			rrule: {freq: 'DAILY'}})]);
-		// January is summer time in Sydney (UTC+11); the old test gives the standard offset.
-		assert.equal(tzm.getOffset(2026, 'Australia/Sydney', Date.UTC(2026, 0, 15) / 1000), 10 * 3600);
+		assert.equal(tzm.getOffset(2026, 'Australia/Sydney', Date.UTC(2026, 0, 15) / 1000), 11 * 3600);
 		assert.equal(tzm.getOffset(2026, 'Australia/Sydney', Date.UTC(2026, 6, 15) / 1000), 10 * 3600);
+		assert.equal(tzm.getOffset(2026, 'Australia/Sydney', Date.UTC(2026, 11, 15) / 1000), 11 * 3600);
+	});
+
+	it('bug 6: a weekly event in Sydney, seen from Amsterdam, keeps its Sydney time in January', async () => {
+		// Mondays 09:00 in Sydney: 22:00Z the Sunday before in January (UTC+11), 23:00Z in July (UTC+10).
+		const e = ev({tzId: 'Australia/Sydney', dtstart: Date.UTC(2026, 6, 5, 23, 0), dtend: Date.UTC(2026, 6, 6, 0, 0),
+			rrule: {freq: 'WEEKLY'}});
+		await em.findNextOccurrenceTimezonePrep([e]);
+		assert.equal(em.findNextOccurrence(e, Date.UTC(2027, 0, 6, 12, 0)), Date.UTC(2027, 0, 10, 22, 0));
 	});
 
 	it('a monthly event on the last Friday', async () => {

@@ -82,10 +82,6 @@ these numbers):
    results array instead of on its record, so it never cancels them.
    Harmless: they are created again with `replace`, which takes their
    place.
-6. The time zone manager's daylight saving test is `dstStart <= t < dstEnd`,
-   which is never true where DST spans the new year (the southern
-   hemisphere), so an event in such a zone, seen from a device in another
-   zone, repeats an hour off half the year.
 8. The revision reached is the highest `_rev` of the events read, which can
    jump past events not read: more than 500 changes at once (db8's page),
    or the deleted ones' revision ahead of the changed ones'.
@@ -148,6 +144,12 @@ Mended since the first version:
     the exception as the occurrence it was looking for and went on from the
     end of its search window. It now counts exceptions only towards a
     `COUNT`, where they belong.
+6. The time zone manager's daylight saving test was `dstStart <= t <
+   dstEnd`, never true where summer time spans the new year (the southern
+   hemisphere: in a year's rules it starts after it ends), so an event in
+   such a zone seen from a device in another zone, or one in another zone
+   seen from such a device, repeated an hour off half the year. Both kinds
+   of year are read now.
 
 These things deliberately differ from the old service:
 
