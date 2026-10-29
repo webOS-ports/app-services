@@ -189,6 +189,34 @@ describe('the reminders service', () => {
 		assert.equal(env.world.launches[0].params.alarm[0].endTime, String(T0 + HOUR));
 	});
 
+	it('bug 8: more changes than a db8 page, and deletions after them, leave no event behind', async () => {
+		const many = n => Array.from({length: n}, (x, i) => event({_id: 'm' + n + '_' + i, dtstart: T0 + HOUR + i * MIN,
+			dtend: T0 + 2 * HOUR + i * MIN, trigger: '-PT15M'}));
+		const first = many(60);
+		const env = await start(first);
+		await env.world.db.put(many(600));
+		await env.world.db.del(first.slice(0, 20).map(e => e._id));
+		await env.world.fireWatches();
+		assert.equal(env.world.state().reminders.filter(r => !r._del).length, 640);
+	});
+
+	it('bug 8: an event changed while a run reads the others is not skipped', async () => {
+		const env = await start([event({_id: 'a', dtstart: T0 + HOUR, dtend: T0 + 2 * HOUR, trigger: '-PT15M'}),
+			event({_id: 'b', dtstart: T0 + 3 * HOUR, dtend: T0 + 4 * HOUR, trigger: '-PT15M'})]);
+		await env.world.db.merge([{_id: 'a', subject: 'A1'}]);
+		let once = true;
+		// While the run gets "a" again, "b" and then "a" change: "a" is got with a revision past b's.
+		env.world.fail('com.palm.db', 'get', {when: () => {
+			if (once) {
+				once = false;
+				env.world.db.merge([{_id: 'b', subject: 'B2'}]).then(() => env.world.db.merge([{_id: 'a', subject: 'A2'}]));
+			}
+			return false;
+		}});
+		await env.world.fireWatches();
+		assert.equal(env.reminder('b').subject, 'B2');
+	});
+
 	it('a missing argument is the thrown string of the old service', async () => {
 		const env = await start([]);
 		const reply = await env.world.request('onSnooze', {});
