@@ -142,11 +142,21 @@ function createPersons({db, call, model, G, linkHash, log = console}) {
 		return r.results[0];
 	}
 
-	// The favourite backups of every contact of these persons; a contact whose hash or lookup
-	// fails counts as having none.
+	/*
+		The favourite backups of every contact of these persons; a contact whose
+		hash or lookup fails counts as having none. The contacts are the ones the
+		persons were just loaded with, when they have them all (only their link
+		hashes are needed), else read again.
+	*/
 	async function favoriteBackupsFor(people) {
 		const ids = Array.from(new Set([].concat(...people.map(p => p.rec.contactIds))));
-		const contacts = await getContacts(ids);
+		const loaded = new Map();
+		for (const p of people) {
+			for (const c of p.contacts) {
+				loaded.set(c._id, c);
+			}
+		}
+		const contacts = ids.every(id => loaded.has(id)) ? ids.map(id => loaded.get(id)) : await getContacts(ids);
 		return Promise.all(contacts.map(async c => {
 			try {
 				return await favoriteBackupForHash((await linkHash.linkHash(c)).linkHash);

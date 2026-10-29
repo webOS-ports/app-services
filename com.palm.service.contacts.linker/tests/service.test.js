@@ -430,6 +430,17 @@ describe('saveNewPersonAndContacts', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
+	it('makes the new person a favourite from the backup of a contact it takes in that was saved before', async () => {
+		const env = await boot();
+		const [old] = await env.putContacts([Object.assign(name('Ann', 'Lee'), {remoteId: 'R1'})]);
+		await env.db.put([{_kind: 'com.palm.person.favoritebackup:1', contactBackupHash: 'Local|R1', defaultPropertyHashes: []}]);
+		const r = await env.ask('saveNewPersonAndContacts', {person: {}, contacts: [{_id: old._id},
+			Object.assign(name('Ann', 'Lee'), {_kind: 'com.palm.contact.palmprofile:1'})]});
+		assert.equal(r.returnValue, true);
+		assert.equal(r.person.favorite, true);
+		env.stop();
+	});
+
 	it('restores the speed dials of every backup of a person\'s contacts, not the first one\'s for all', async () => {
 		const env = await boot();
 		await env.db.put([{_kind: 'com.palm.person.speeddialbackup:1', contactBackupHash: 'Local|R1',
