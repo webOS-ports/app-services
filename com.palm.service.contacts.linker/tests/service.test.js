@@ -238,6 +238,24 @@ describe('the linker', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
+	it('weighs manual unlinks between two other persons without failing', async () => {
+		// The old check read the contact ids of the person it walked from a variable the walk
+		// inside it set to another person's, went past their end and failed the contact.
+		const env = await boot();
+		const [a1, a2, b1] = await env.putContacts([name('Ann', 'Lee'), name('Ann', 'Lee'), name('Ann', 'Lee')]);
+		await env.ask('forceAutolink');
+		const r = await env.ask('manualUnlink', {personToRemoveLinkFrom: env.personOf(a1._id)._id,
+			contactToRemoveFromPerson: b1._id});
+		assert.equal(r.returnValue, true);
+		const [x] = await env.putContacts([name('Ann', 'Lee')]);
+		assert.equal(await env.ask('forceAutolink'), true);
+		// x looks like both; they hold the two sides of an unlink, so each counts against the other.
+		assert.deepEqual(env.personOf(x._id).contactIds, [x._id]);
+		assert.deepEqual(env.personOf(a1._id).contactIds.slice().sort(), [a1._id, a2._id].sort());
+		assert.deepEqual(env.personOf(b1._id).contactIds, [b1._id]);
+		env.stop();
+	});
+
 	it('forceAutolink links every contact, not only the first page of 500', async () => {
 		const env = await boot();
 		const list = [name('Ann', 'Lee')];

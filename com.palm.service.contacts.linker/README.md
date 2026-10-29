@@ -56,9 +56,6 @@ them by these numbers):
 - Q7.9: `getManualLinks` / `getUnlinkLinks` over the bus never work: with
   an id they do not answer until the command times out (504), and with a
   contact object they want the framework's contact.
-- The manual unlink check reuses one variable for the contact ids it walks,
-  so it can read past the end of a person's ids and fail the contact with
-  a `TypeError`.
 
 These things deliberately differ from the old service:
 
