@@ -285,3 +285,27 @@ test('B1: a transport that fails does not stop the others, and a deleted account
 		assert.deepStrictEqual(s.tempdb.all('com.palm.account.syncstate:1'), []);
 	});
 });
+
+test('B2: createAccount with a password: made only when every validator takes it', async () => {
+	const VAL = {templateId: 'com.test.val', loc_name: 'Validated', validator: 'palm://com.test.val/checkCredentials',
+		writePermissions: ['com.test.*'],
+		capabilityProviders: [{id: 'com.test.val.mail', capability: 'MAIL', validator: 'palm://com.test.val/checkMail'}]};
+	const answers = {};
+	const transports = (address, args) => answers[address](args);
+	await withService({templates: {'com.test.val': VAL}, transports}, async s => {
+		const ask = () => s.ask('createAccount', {templateId: 'com.test.val', username: 'v@example.org',
+			capabilityProviders: [{id: 'com.test.val.mail'}], password: 'fake-pw'}, {appId: 'com.test.app'});
+		answers['palm://com.test.val/checkCredentials'] = () => ({returnValue: true, credentials: {common: {token: 'fake-t1'}}});
+		answers['palm://com.test.val/checkMail'] = () => ({returnValue: false, errorCode: 'BAD_PW', errorText: 'turned down'});
+		const r = await ask();
+		assert.deepStrictEqual([r.returnValue, r.errorCode], [false, 'BAD_PW']);
+		assert.match(r.errorText, /turned down$/);
+		assert.ok(!/fake-pw/.test(JSON.stringify(r)));
+		assert.deepStrictEqual(s.accounts(), []);
+		assert.strictEqual(s.keys.size, 0);
+		answers['palm://com.test.val/checkMail'] = () => ({returnValue: true, credentials: {mail: {token: 'fake-t2'}}});
+		const ok = await ask();
+		assert.strictEqual(ok.returnValue, true);
+		assert.deepStrictEqual(JSON.parse(s.keys.get(ok.result._id)), {common: {token: 'fake-t1'}, mail: {token: 'fake-t2'}});
+	});
+});

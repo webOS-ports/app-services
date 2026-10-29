@@ -158,18 +158,25 @@ function createCommands({db, pc, keystore, templates, reloadTemplates, log = con
 				config
 			});
 		}
-		// B2: a validator that fails is logged and left out; the account is made all the same.
+		// Any failure fails the whole: the first validator to turn the credentials down fails the
+		// create with its error, and no account is made. (The old code logged it and made the
+		// account all the same: README, B2.)
 		function aggregate(results) {
 			const acc = {};
 			const creds = {};
+			let failed = null;
 			results.forEach(r => {
 				if (r.result) {
 					_.extend(acc, r.result);
 					_.extend(creds, r.result.credentials);
 				} else {
 					log.warn('validator returned error: ' + r.exception);
+					failed = failed || r;
 				}
 			});
+			if (failed) {
+				throw failed.exception;
+			}
 			acc.credentials = creds;
 			return acc;
 		}
