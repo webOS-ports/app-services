@@ -92,10 +92,6 @@ these numbers):
 10. `onInit` reads the first 500 events only (db8's page).
 12. mojoservice made an activity for each call that brought none, and left
     the ones of `onWake`, `onAutoClose` and `onDBChanged` behind.
-13. An exception date of a daily event (or of a weekly one on several days)
-    skips the occurrence after it as well: the calendar framework counts the
-    exception as the occurrence it was looking for, and goes on from the end
-    of its search window.
 
 Mended since the first version:
 
@@ -147,6 +143,11 @@ Mended since the first version:
 5. An exception date of a length other than 8, 15 or 16 ended the check of
    the event's other exception dates, so the ones after it were not
    excluded. Now it is passed over.
+13. An exception date of a daily event (or of a weekly one on several days)
+    skipped the occurrence after it as well: the calendar framework counted
+    the exception as the occurrence it was looking for and went on from the
+    end of its search window. It now counts exceptions only towards a
+    `COUNT`, where they belong.
 
 These things deliberately differ from the old service:
 

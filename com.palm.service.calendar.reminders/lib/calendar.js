@@ -863,7 +863,7 @@ function createEventManager(tzm) {
 	}
 
 	function findRepeatsInRangeHelper(event, range, datesInRange, datesInEvent, eventStartHours, eventStartMinutes,
-		limit, timeMachine) {
+		limit, timeMachine, exceptionsCount = true) {
 		let nextMidnight;
 		const occurrenceTracker = {};
 		const datesInRangeSize = datesInRange.length;
@@ -900,9 +900,12 @@ function createEventManager(tzm) {
 				continue;
 			}
 			if (repeatsOnDate === -1) {
-				numFound++;
-				if (numFound === limit) {
-					return eventOccurrences;
+				// An exception is one of a COUNT's occurrences; it is not the next occurrence (bug 13).
+				if (exceptionsCount) {
+					numFound++;
+					if (numFound === limit) {
+						return eventOccurrences;
+					}
 				}
 				continue;
 			}
@@ -996,7 +999,10 @@ function createEventManager(tzm) {
 		if (event.dtstart > searchRange.end || repeatEndedBeforeDate(event.rrule, event.countInfo, searchRange.start)) {
 			return noOccurrences;
 		}
-		return findRepeatsInRangeHelper(event, range, datesInRange, datesInEvent, hours, minutes, limit, timeMachine);
+		// Bug 13: the framework counted an exception as the occurrence it was looking for, so the search went on
+		// from the end of the window, past the occurrence after the exception.
+		return findRepeatsInRangeHelper(event, range, datesInRange, datesInEvent, hours, minutes, limit, timeMachine,
+			false);
 	}
 
 	function reconstructOccurrences(event, occurrences, range) {
