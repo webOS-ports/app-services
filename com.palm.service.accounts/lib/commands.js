@@ -41,31 +41,23 @@ function sleep(ms) {
 	return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// A wait that never ends: where the old command's chain stopped for good (its future never set).
-const STALL = () => new Promise(() => {});
-
 /*
-	Calls made all at once, the next step taken once every one has answered
-	with success. One that fails is logged and the step is never taken, as
-	the old count never reached its end (README: B1).
+	Calls made all at once, the next step taken once every one has answered.
+	One that fails is logged, and the next step is taken all the same: the old
+	count only went on once all had succeeded, so one transport that failed
+	stopped the rest for good, and a deleted account was never removed
+	(README: B1).
 */
 function allSucceed(calls, log) {
-	return new Promise(resolve => {
-		let ok = 0;
-		const len = calls.length;
-		for (const {call, what} of calls) {
-			call().then(r => {
-				if (r.returnValue || r === true) {
-					log.log(what + ' was successful');
-					if (++ok === len) {
-						resolve({});
-					}
-				} else {
-					log.log(what + ' failed:' + JSON.stringify(r));
-				}
-			}, () => {});
+	return Promise.all(calls.map(({call, what}) => call().then(r => {
+		if (r.returnValue || r === true) {
+			log.log(what + ' was successful');
+		} else {
+			log.log(what + ' failed:' + JSON.stringify(r));
 		}
-	});
+	}, e => {
+		log.log(what + ' failed, errorCode ' + (e && e.errorCode));
+	}))).then(() => ({}));
 }
 
 function TransportError(failed) {
@@ -812,7 +804,7 @@ function createCommands({db, pc, keystore, templates, reloadTemplates, log = con
 		hasCredentials, restoreCompleted, accountsChanged: restoreCompleted, appsChanged, setPrefs,
 		notifyAccountCreated, notifyAccountDeleted, stayRunning, createLocalAccount
 	};
-	return {methods, saveCredentials, STALL};
+	return {methods, saveCredentials};
 }
 
 module.exports = {createCommands, TIMEOUTS, SERVICE, FLAG, TransportError};

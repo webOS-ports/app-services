@@ -267,3 +267,21 @@ test('__quit: answered, then the service gives its name back', async () => {
 		assert.ok(s.service.bus.handle.unregistered);
 	});
 });
+
+test('B1: a transport that fails does not stop the others, and a deleted account still goes', async () => {
+	await withService({}, async s => {
+		s.fail['com.test.mail/onCreate'] = 1;
+		const id = (await create(s)).result._id;
+		await new Promise(res => setTimeout(res, 1200));
+		await s.settle();
+		assert.deepStrictEqual(s.callsTo('com.test.mail/').map(c => c.method).sort(), ['onCapabilitiesChanged', 'onCreate', 'onEnabled']);
+		s.fail['com.test.mail/onDelete'] = 1;
+		s.fail['com.test.mail/onEnabled'] = 1;
+		assert.strictEqual((await s.ask('deleteAccount', {accountId: id}, APP)).returnValue, true);
+		await new Promise(res => setTimeout(res, 2300));
+		await s.settle();
+		assert.strictEqual(s.accounts()[0]._del, true);
+		assert.ok(!s.keys.has(id));
+		assert.deepStrictEqual(s.tempdb.all('com.palm.account.syncstate:1'), []);
+	});
+});
