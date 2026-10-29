@@ -326,8 +326,8 @@ class FakeThumbnailer {
 // A download that serves bytes from a map of URL -> Buffer
 function fakeDownload(files) {
 	const fetched = [];
-	const fn = async (url, dest) => {
-		fetched.push({url, dest});
+	const fn = async (url, dest, opts = {}) => {
+		fetched.push({url, dest, localRoot: opts.localRoot, removeSource: opts.removeSource});
 		if (!files.has(url)) {
 			throw new Error(`HTTP 404 for ${url}`);
 		}
