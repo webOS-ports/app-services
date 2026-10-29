@@ -95,9 +95,6 @@ these numbers):
 8. The revision reached is the highest `_rev` of the events read, which can
    jump past events not read: more than 500 changes at once (db8's page),
    or the deleted ones' revision ahead of the changed ones'.
-9. An event without an end gets a reminder with no `endTime` or
-   `autoCloseTime`; `onWake` then fails on it, and none of the reminders
-   of that wake is shown.
 10. `onInit` reads the first 500 events only (db8's page).
 12. mojoservice made an activity for each call that brought none, and left
     the ones of `onWake`, `onAutoClose` and `onDBChanged` behind.
@@ -144,6 +141,10 @@ Mended since the first version:
     manager waited for it for ever, and the command with it. It now takes
     the zone the process runs in (the device's `/etc/localtime`, which is
     what systemservice reports), and keeps the subscription for changes.
+9. An event without an end got a reminder with no `endTime` or
+   `autoCloseTime`; `onWake` then failed on it, and none of the reminders
+   of that wake was shown. Such an event now lasts no time: its reminder
+   ends at its start and closes 15 minutes after it, as for any short event.
 
 These things deliberately differ from the old service:
 

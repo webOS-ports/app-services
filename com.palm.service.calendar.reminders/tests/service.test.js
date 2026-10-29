@@ -178,6 +178,17 @@ describe('the reminders service', () => {
 		}
 	});
 
+	it('bug 9: an event with no end is shown, and closed 15 minutes after its start', async () => {
+		const env = await start([event({_id: 'n', dtstart: T0 + HOUR, trigger: '-PT15M'})]);
+		const r = env.reminder('n');
+		assert.equal(r.endTime, T0 + HOUR);
+		assert.equal(r.autoCloseTime, T0 + HOUR + 15 * MIN);
+		env.clock.set(T0 + 45 * MIN);
+		await env.world.fireDue();
+		assert.equal(env.world.launches.length, 1);
+		assert.equal(env.world.launches[0].params.alarm[0].endTime, String(T0 + HOUR));
+	});
+
 	it('a missing argument is the thrown string of the old service', async () => {
 		const env = await start([]);
 		const reply = await env.world.request('onSnooze', {});
