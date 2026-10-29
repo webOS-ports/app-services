@@ -34,13 +34,23 @@ describe('com.palm.service.contacts', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
-	it('preBackup lists the Palm Profile contacts\' original photos, "" for one with no value', async () => {
+	it('preBackup lists the Palm Profile contacts\' original photos, every page, none for one with no value (C11)', async () => {
 		const env = await boot();
+		const many = [];
+		for (let i = 0; i < 600; i += 1) {
+			many.push({_id: 'm' + String(i).padStart(3, '0'), _kind: 'com.palm.contact.palmprofile:1', accountId: 'acct-p',
+				photos: [{value: '/media/internal/m' + i + '.jpg'}]});
+		}
 		await env.db.put([{_id: 'c1', _kind: 'com.palm.contact.palmprofile:1', accountId: 'acct-p',
 			photos: [{value: '/media/internal/a.jpg', localPath: '/var/x.jpg'}, {type: 'type_big'}]},
-		{_id: 'c2', _kind: 'com.palm.contact.google:1', accountId: 'acct-g', photos: [{value: '/g.jpg'}]}]);
-		assert.deepEqual(await env.ask('preBackup'), {version: '1.0', description: 'Backup of 2 palm profile contact photos.',
-			files: ['/media/internal/a.jpg', ''], ignoreMissingFiles: true, returnValue: true});
+		{_id: 'c2', _kind: 'com.palm.contact.google:1', accountId: 'acct-g', photos: [{value: '/g.jpg'}]}].concat(many));
+		const r = await env.ask('preBackup');
+		assert.equal(r.description, 'Backup of 601 palm profile contact photos.');
+		assert.equal(r.files.length, 601);
+		assert.deepEqual(r.files.slice(0, 2), ['/media/internal/a.jpg', '/media/internal/m0.jpg']);
+		assert.ok(r.files.includes('/media/internal/m599.jpg'));
+		assert.ok(!r.files.includes(''));
+		assert.deepEqual([r.version, r.ignoreMissingFiles, r.returnValue], ['1.0', true, true]);
 		env.stop();
 	});
 
