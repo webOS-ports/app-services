@@ -68,12 +68,13 @@ test. The old service's bugs, by number:
   only one in `/media/internal/.contactphotos/` (where the service crops
   Palm Profile photos), as the service runs as root; any other path fails
   with `NOT_A_CONTACT_PHOTO`. No path answers `{}` at once.
-- C4: a phone number, email or IM with no `favoriteData` of its own shares
+- C4 (mended): a phone number, email or IM with no `favoriteData` of its own shares
   one default object with every other such point, for as long as the
   service runs. A default set on one is set on all of them; the clean-up of
   the app's other defaults then removes it from all of them, the chosen one
   too, so the default is lost; and what is left stays on that shared object
-  for the next persons the service saves.
+  for the next persons the service saves. Each point now has a `{}` of
+  its own.
 - C5: `favoritePerson` with `defaultData` reads the person twice: the
   default is set on the second copy, which refuses a person that is not a
   favourite yet, and for one that is, the first copy is saved after it and
