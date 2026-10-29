@@ -154,6 +154,19 @@ describe('the reminders service', () => {
 		assert.equal(next.startTime, Date.UTC(2026, 9, 30, 14, 0));
 	});
 
+	it('bug 4: an event the rules throw on loses its own reminder only', async () => {
+		const env = await start([
+			event({_id: 'good', dtstart: T0 + HOUR, dtend: T0 + 2 * HOUR, trigger: '-PT15M'}),
+			event({_id: 'badExdate', dtstart: T0 - 48 * HOUR, dtend: T0 - 47 * HOUR, rrule: {freq: 'DAILY'},
+				exdates: ['2026XX01'], trigger: '-PT15M'}),
+			Object.assign(event({_id: 'badAlarm', dtstart: T0 + 3 * HOUR, dtend: T0 + 4 * HOUR}),
+				{alarm: [{action: 'display', alarmTrigger: {valueType: 'DURATION', value: 15}}]})
+		]);
+		assert.deepEqual(env.world.state().reminders.filter(r => !r._del).map(r => r.eventId), ['good']);
+		assert.equal(env.world.state().status[0].status, 'OK');
+		assert.equal(env.byName('wake').callback.params.showTime, T0 + 45 * MIN);
+	});
+
 	it('a missing argument is the thrown string of the old service', async () => {
 		const env = await start([]);
 		const reply = await env.world.request('onSnooze', {});
