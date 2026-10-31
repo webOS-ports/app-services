@@ -7,6 +7,8 @@
 		"contactsservice.operation",
 		"database.operation",
 		"filecache.operation",
+		"image.convert",
+		"image.ezresize",
 		"systemsettings.query",
 		"tempdatabase.operation",
 		"time.query"
