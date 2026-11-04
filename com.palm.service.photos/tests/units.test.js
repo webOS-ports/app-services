@@ -17,6 +17,7 @@ const {Paths, segment, albumDirName, removeFile, removeDir, copyInto} = require(
 const {AccountsManager} = require('../lib/accounts');
 const {SerialQueue} = require('../lib/queue');
 const {download} = require('../lib/download');
+const {downloadHeaders} = require('../lib/sync');
 const {Thumbnailer} = require('../lib/thumbnailer');
 const {png, jpeg, tmpRoot} = require('./fake');
 
@@ -330,4 +331,38 @@ test('download: copies a file:// photo from inside the media root only', async t
 	assert.equal(await download(`file://${src}`, dest + '9', {...opts, removeSource: true}), 'plain photo'.length);
 	assert.equal(fs.readFileSync(dest + '9', 'utf8'), 'plain photo');
 	assert.ok(!fs.existsSync(src), 'removed');
+});
+
+test('download: a session given with the listing is sent, and then no redirect is followed', async t => {
+	const root = tmpRoot();
+	t.after(root.cleanup);
+	const dest = path.join(root.dir, 'p.jpg');
+	const seen = [];
+	const fetchImpl = async (url, init) => {
+		seen.push(init);
+		return init.redirect === 'manual' ? new Response(null, {status: 302, headers: {location: 'https://elsewhere.example/'}})
+			: new Response('photo', {status: 200});
+	};
+	await download('https://x.example/p.jpg', dest, {fetchImpl});
+	assert.equal(seen[0].redirect, 'follow');
+	assert.equal(seen[0].headers, undefined, 'none unless given');
+	await assert.rejects(download('https://x.example/p.jpg', dest + '2', {fetchImpl, headers: {Cookie: 's=1'}}), /HTTP 302/);
+	assert.deepEqual(seen[1].headers, {Cookie: 's=1'});
+	assert.equal(seen[1].redirect, 'manual');
+	assert.ok(!fs.existsSync(dest + '2'));
+});
+
+test('downloadHeaders: only Cookie and Authorization, one line each', () => {
+	assert.deepEqual(downloadHeaders({Cookie: 'a=1; b=2'}), {Cookie: 'a=1; b=2'});
+	assert.deepEqual(downloadHeaders({authorization: 'Bearer x', cookie: 'a=1'}), {authorization: 'Bearer x', cookie: 'a=1'});
+	assert.equal(downloadHeaders(undefined), null);
+	assert.equal(downloadHeaders('Cookie: a=1'), null);
+	assert.equal(downloadHeaders([]), null);
+	assert.equal(downloadHeaders({}), null);
+	assert.equal(downloadHeaders({Host: 'evil.example'}), null, 'any other header: none at all');
+	assert.equal(downloadHeaders({Cookie: 'a=1', Host: 'evil.example'}), null);
+	assert.equal(downloadHeaders({Cookie: 'a=1\r\nHost: evil'}), null);
+	assert.equal(downloadHeaders({Cookie: ''}), null);
+	assert.equal(downloadHeaders({Cookie: 5}), null);
+	assert.equal(downloadHeaders({Cookie: 'x'.repeat(8193)}), null);
 });

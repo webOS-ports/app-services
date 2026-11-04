@@ -13,6 +13,9 @@
 // another, which keeps the device's connections and storage writes calm.
 // When the account is done the thumbnails are made, and only then is its
 // sync over, so the app's spinner turns until the photos can be shown.
+//
+// An album may be in another (parentAid): its entry gets that album's _id as
+// parentId, and the app shows it inside that one.
 
 const fsp = require('fs').promises;
 const path = require('path');
@@ -120,18 +123,35 @@ class SyncEngine {
 			}
 		}
 
+		// Every album first, so that the sub-albums can be linked to theirs before the photos
+		// come down: the app shows the tree while they do.
 		let failure = null;
+		const synced = new Map();      // aid -> {album, isNew}
 		for (const [aid, r] of remoteAlbums) {
 			signal.throwIfAborted();
 			try {
 				const known = byAid.get(aid);
 				const album = known ? await this.updateAlbum(account, known, r, cap) : await this.addAlbum(account, r);
-				await this.syncAlbum(account, cap, album, !known, signal);
+				synced.set(aid, {album, isNew: !known});
 			} catch (e) {
 				if (signal.aborted) {
 					throw signal.reason;
 				}
 				log.warn(`album ${r.name} of ${account.templateId}: ${e.message}`);
+				failure = failure || e;
+			}
+		}
+		await this.linkParents(remoteAlbums, synced);
+
+		for (const {album, isNew} of synced.values()) {
+			signal.throwIfAborted();
+			try {
+				await this.syncAlbum(account, cap, album, isNew, signal);
+			} catch (e) {
+				if (signal.aborted) {
+					throw signal.reason;
+				}
+				log.warn(`album ${album.name} of ${account.templateId}: ${e.message}`);
 				failure = failure || e;
 			}
 		}
@@ -142,6 +162,40 @@ class SyncEngine {
 			throw failure;
 		}
 		return {albums: remoteAlbums.size};
+	}
+
+	// Sub-albums: a connector may give an album the aid of the one it is in (parentAid). The
+	// entry keeps that, and the parent's _id as parentId, which is what the app reads. A
+	// parent that is not listed or not synced, or a chain of parents that comes back on
+	// itself, makes it a top-level album: parentId "".
+	async linkParents(remoteAlbums, synced) {
+		const parentOf = aid => {
+			const r = remoteAlbums.get(aid);
+			const p = r ? parentAidOf(r) : null;
+			return p !== null && synced.has(p) ? p : null;
+		};
+		const changes = [];
+		for (const [aid, {album}] of synced) {
+			let parent = parentOf(aid);
+			// Up the chain: back at this album means a loop
+			const seen = new Set([aid]);
+			for (let p = parent; p !== null; p = parentOf(p)) {
+				if (seen.has(p)) {
+					log.warn(`album ${album.name}: its parents make a loop, shown at the top`);
+					parent = null;
+					break;
+				}
+				seen.add(p);
+			}
+			const parentId = parent !== null ? synced.get(parent).album._id : '';
+			const parentAid = parent !== null ? parent : '';
+			if ((album.parentId || '') !== parentId || (album.parentAid || '') !== parentAid) {
+				changes.push({_id: album._id, parentId, parentAid});
+				album.parentId = parentId;
+				album.parentAid = parentAid;
+			}
+		}
+		await this.db.merge(changes);
 	}
 
 	async addAlbum(account, r) {
@@ -218,6 +272,7 @@ class SyncEngine {
 		}
 		const listed = await callProvider(this.bus, cap, 'listPhotos', params,
 			{timeoutMs: LIST_TIMEOUT_MS, attempts: LIST_ATTEMPTS, signal});
+		const headers = downloadHeaders(listed.headers);
 		const remote = new Map();
 		for (const p of listed.photos || []) {
 			if (p && p.pid !== undefined && p.pid !== null && !remote.has(String(p.pid))) {
@@ -262,7 +317,7 @@ class SyncEngine {
 				continue;
 			}
 			try {
-				await this.fetchPhoto(account, album, p, signal);
+				await this.fetchPhoto(account, album, p, signal, headers);
 			} catch (e) {
 				if (signal.aborted) {
 					throw signal.reason;
@@ -283,7 +338,7 @@ class SyncEngine {
 	}
 
 	// Downloads one photo and writes its entry
-	async fetchPhoto(account, album, p, signal) {
+	async fetchPhoto(account, album, p, signal, headers) {
 		const url = p.src_big || p.src_small;
 		if (!url) {
 			throw new Error('no URL to download from');
@@ -291,7 +346,11 @@ class SyncEngine {
 		const video = p.type === 'video';
 		const file = await this.targetFor(album, p, url);
 		// A provider's temporary copy (temporary:true) is removed once it is copied
-		await this.download(url, file, {signal, localRoot: this.paths.media, removeSource: p.temporary === true});
+		const opts = {signal, localRoot: this.paths.media, removeSource: p.temporary === true};
+		if (headers) {
+			opts.headers = headers;
+		}
+		await this.download(url, file, opts);
 
 		let finalPath = file;
 		let readable = true;
@@ -395,6 +454,34 @@ class SyncEngine {
 	}
 }
 
+// A listed album's parentAid, as the aids are keyed: a string or a number, else none.
+function parentAidOf(r) {
+	const p = r.parentAid;
+	return (typeof p === 'string' && p !== '') || Number.isFinite(p) ? String(p) : null;
+}
+
+// What a connector whose links need a session (PiGallery2's cookie) asks to be sent with
+// each of the listing's downloads: only Cookie and Authorization, single-line strings.
+// Never kept, never logged. Anything else in it, or none at all: no headers.
+const DOWNLOAD_HEADERS = ['cookie', 'authorization'];
+const MAX_HEADER_LENGTH = 8192;
+
+function downloadHeaders(given) {
+	if (!given || typeof given !== 'object' || Array.isArray(given)) {
+		return null;
+	}
+	const out = {};
+	for (const [name, value] of Object.entries(given)) {
+		if (!DOWNLOAD_HEADERS.includes(name.toLowerCase()) || typeof value !== 'string' ||
+				!value || value.length > MAX_HEADER_LENGTH || /[\r\n\0]/.test(value)) {
+			log.warn(`listPhotos asked for a download header that is not taken: ${name}`);
+			return null;
+		}
+		out[name] = value;
+	}
+	return Object.keys(out).length ? out : null;
+}
+
 function total(size) {
 	return {
 		images: size && Number.isFinite(size.images) ? size.images : 0,
@@ -402,4 +489,4 @@ function total(size) {
 	};
 }
 
-module.exports = {SyncEngine};
+module.exports = {SyncEngine, downloadHeaders};

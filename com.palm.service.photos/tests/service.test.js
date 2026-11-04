@@ -558,3 +558,62 @@ test('files whose entries were lost are taken over, and leftovers swept', async 
 	assert.deepEqual(after.map(p => p.path).sort(), before.map(p => p.path).sort(), 'into the same files');
 	assert.deepEqual(fs.readdirSync(cam.path).sort(), ['busy.jpg.part', 'one.jpg', 'two.png']);
 });
+
+test('sub-albums: each entry has its parent\'s _id, and follows it when it moves', async t => {
+	const {bus, svc, api, cloud} = setup(t, {
+		albums: [
+			{aid: 'Trips/Italy/Rome', name: 'Rome', parentAid: 'Trips/Italy', size: {images: 1}},
+			{aid: 'Trips/Italy', name: 'Italy', parentAid: 'Trips', size: {images: 1}},
+			{aid: 'Trips', name: 'Trips', size: {images: 0}},
+			{aid: 'Family', name: 'Family', parentAid: 'Not/Listed', size: {images: 1}},
+			{aid: 'Self', name: 'Self', parentAid: 'Self', size: {images: 0}}
+		],
+		photos: {
+			'Trips/Italy/Rome': [{pid: 'r1', src_big: 'https://dl.example/t/AAA?token=s3cret', type: 'image', fileName: 'r.jpg'}],
+			'Trips/Italy': [{pid: 'i1', src_big: 'https://dl.example/t/CCC?token=s3cret', type: 'image', fileName: 'i.jpg'}],
+			Family: [{pid: 'f1', src_big: 'https://dl.example/t/BBB?token=s3cret', type: 'image', fileName: 'f.jpg'}]
+		}
+	});
+	await svc.start();
+	assert.equal((await api.syncSingleAccount({accountId: 'acct1'})).returnValue, true);
+	const byAid = () => new Map(albumsOf(bus, 'acct1').map(a => [a.aid, a]));
+	let albums = byAid();
+	assert.equal(albums.get('Trips/Italy/Rome').parentId, albums.get('Trips/Italy')._id, 'a parent listed after its child');
+	assert.equal(albums.get('Trips/Italy/Rome').parentAid, 'Trips/Italy');
+	assert.equal(albums.get('Trips/Italy').parentId, albums.get('Trips')._id);
+	assert.equal(albums.get('Trips').parentId || '', '', 'top level');
+	assert.equal(albums.get('Family').parentId || '', '', 'a parent not listed: top level');
+	assert.equal(albums.get('Self').parentId || '', '', 'its own parent: top level');
+	assert.equal(photosOf(bus, 'acct1').length, 3, 'every album\'s photos, whatever its place');
+
+	// Rome moves to the top, Italy's parent goes away, and two albums point at each other
+	cloud.albums = [
+		{aid: 'Trips/Italy/Rome', name: 'Rome', size: {images: 1}},
+		{aid: 'Trips/Italy', name: 'Italy', parentAid: 'Trips', size: {images: 1}},
+		{aid: 'A', name: 'A', parentAid: 'B', size: {images: 0}},
+		{aid: 'B', name: 'B', parentAid: 'A', size: {images: 0}},
+		{aid: 'C', name: 'C', parentAid: 'A', size: {images: 0}}
+	];
+	assert.equal((await api.syncSingleAccount({accountId: 'acct1'})).returnValue, true);
+	albums = byAid();
+	assert.equal(albums.get('Trips/Italy/Rome').parentId, '');
+	assert.equal(albums.get('Trips/Italy/Rome').parentAid, '');
+	assert.equal(albums.get('Trips/Italy').parentId, '', 'its parent is gone');
+	assert.equal(albums.get('A').parentId || '', '', 'a loop: top level');
+	assert.equal(albums.get('B').parentId || '', '');
+	assert.equal(albums.get('C').parentId || '', '', 'below a loop: top level too');
+});
+
+test('download headers a listing hands over go with its downloads, and are kept nowhere', async t => {
+	const {bus, svc, api, download} = setup(t);
+	const listPhotos = bus.providers[SVC].listPhotos;
+	bus.providers[SVC].listPhotos = p => Object.assign(listPhotos(p),
+		p.aid === '/Trips' ? {headers: {Cookie: 'session=s3cret'}} : {headers: {Cookie: 'x', Host: 'evil'}});
+	await svc.start();
+	await api.syncSingleAccount({accountId: 'acct1'});
+	const sent = new Map(download.fetched.map(f => [f.url, f.headers]));
+	assert.deepEqual(sent.get('https://dl.example/t/CCC?token=s3cret'), {Cookie: 'session=s3cret'});
+	assert.equal(sent.get('https://dl.example/t/AAA?token=s3cret'), undefined, 'headers it may not ask for: none');
+	assert.ok(!JSON.stringify(bus.db.live('com.palm.media.types:1')).includes('session=s3cret'));
+	assert.ok(!JSON.stringify(bus.db.live('com.palm.media.image.album:1')).includes('session=s3cret'));
+});
