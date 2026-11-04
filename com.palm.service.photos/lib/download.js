@@ -17,6 +17,10 @@
 // write too, and the service runs as root. A copy the connector marks as
 // temporary (removeSource) is removed once it is copied: it was made only
 // for this.
+//
+// A connector whose links work only with its session (PiGallery2's cookie)
+// hands headers over with its listing. Those are sent, and then no redirect
+// is followed: a session must not go along to wherever one points.
 
 const fs = require('fs');
 const fsp = fs.promises;
@@ -31,7 +35,7 @@ const DEFAULT_MAX_BYTES = 256 * 1024 * 1024;
 // Writes url to dest (through dest + ".part", so a half download never has
 // the final name). Resolves with the number of bytes.
 async function download(url, dest, {signal, timeoutMs = DEFAULT_TIMEOUT_MS, maxBytes = DEFAULT_MAX_BYTES,
-	fetchImpl = globalThis.fetch, localRoot, removeSource = false} = {}) {
+	fetchImpl = globalThis.fetch, localRoot, removeSource = false, headers = null} = {}) {
 	let parsed;
 	try {
 		parsed = new URL(url);
@@ -50,7 +54,12 @@ async function download(url, dest, {signal, timeoutMs = DEFAULT_TIMEOUT_MS, maxB
 	}
 	const part = dest + '.part';
 	try {
-		const response = await fetchImpl(parsed.href, {redirect: 'follow', signal: AbortSignal.any(signals)});
+		const init = {redirect: 'follow', signal: AbortSignal.any(signals)};
+		if (headers) {
+			init.headers = headers;
+			init.redirect = 'manual';
+		}
+		const response = await fetchImpl(parsed.href, init);
 		if (!response.ok || !response.body) {
 			throw new Error(`HTTP ${response.status} for ${parsed.host}`);
 		}

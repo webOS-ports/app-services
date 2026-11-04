@@ -327,7 +327,7 @@ class FakeThumbnailer {
 function fakeDownload(files) {
 	const fetched = [];
 	const fn = async (url, dest, opts = {}) => {
-		fetched.push({url, dest, localRoot: opts.localRoot, removeSource: opts.removeSource});
+		fetched.push({url, dest, localRoot: opts.localRoot, removeSource: opts.removeSource, headers: opts.headers});
 		if (!files.has(url)) {
 			throw new Error(`HTTP 404 for ${url}`);
 		}

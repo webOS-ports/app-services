@@ -34,8 +34,8 @@ A connector's service answers:
 
 | method | parameters | answer |
 |---|---|---|
-| `listAlbums` | `accountId` | `albums: [{aid, name, size: {images, videos}}]` |
-| `listPhotos` | `accountId, aid` | `photos: [{pid, src_big, src_small, caption, type, fileName}]` |
+| `listAlbums` | `accountId` | `albums: [{aid, name, size: {images, videos}, parentAid}]` |
+| `listPhotos` | `accountId, aid` | `photos: [{pid, src_big, src_small, caption, type, fileName}]`, `headers` |
 | `upload` | `accountId, albumId (the aid), path` | `pid` |
 | `deletePhoto` | `accountId, pid` | |
 
@@ -45,6 +45,21 @@ extension is set from what the file turns out to be. The links themselves
 are not kept: they often carry an access token. A cloud album's directory
 is the service's alone: what is in it without an entry (a download whose
 entry was lost) is removed when the album has synced.
+
+`parentAid`, when given, is the aid of the album this one is in (a
+folder in a folder). The album's entry keeps it, and the parent's `_id`
+as `parentId`, which the Photos app reads to show sub-albums inside their
+album; top-level albums have `parentId: ""`. A parent that is not listed,
+or a chain of parents that loops, leaves the album at the top. Every album
+is synced in its own right, sub-albums too; an album with only sub-albums
+is listed with no photos.
+
+`headers`, when given, are sent with each of that listing's downloads,
+for a connector whose links work only with its session (PiGallery2's
+cookie). Only `Cookie` and `Authorization` are taken, as single-line
+strings; with anything else no headers are sent. With headers a download
+follows no redirect, so the session goes nowhere else. They are kept
+nowhere, as the links are not.
 
 The connectors from webos-synergy-revival follow this contract. Their
 `photos-integration/patches` for the old service are part of this one:
