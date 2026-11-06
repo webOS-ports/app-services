@@ -77,6 +77,21 @@ function methods(svc) {
 			return {returnValue: true, path: await svc.fetchOriginal(p._id)};
 		},
 
+		keepAlbum: async p => {
+			if (!p || !p.albumId || typeof p.keep !== 'boolean') {
+				return {returnValue: false, msg: 'The album (albumId) and keep (true or false) are needed'};
+			}
+			return Object.assign({returnValue: true}, await svc.keepAlbum(p.albumId, p.keep));
+		},
+		getStorage: async () => Object.assign({returnValue: true}, await svc.storageInfo()),
+		setStorage: async p => {
+			if (!p || !Number.isFinite(p.capBytes)) {
+				return {returnValue: false, msg: 'capBytes is needed'};
+			}
+			return Object.assign({returnValue: true}, await svc.setStorage(p.capBytes));
+		},
+		clearDownloads: async () => Object.assign({returnValue: true}, await svc.clearDownloads()),
+
 		onEnabled: p => svc.onEnabled(p || {}),
 		onCredentialsChanged: p => svc.onCredentialsChanged(p || {}),
 		onDelete: clearAccount,

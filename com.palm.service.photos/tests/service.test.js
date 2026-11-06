@@ -19,6 +19,7 @@ const {FakeBus, FakeThumbnailer, fakeDownload, png, jpeg, tmpRoot} = require('./
 log.setQuiet(true);
 
 const TPL = 'com.palm.dropbox';
+const GB = 1024 * 1024 * 1024;
 const SVC = 'com.palm.service.dropbox';
 
 // A Dropbox-like account with its albums and photos, and the bytes behind the photos' links
@@ -71,7 +72,11 @@ function setup(t, {albums, photos} = {}) {
 	const paths = new Paths(root.media);
 	const thumbs = new FakeThumbnailer();
 	const download = fakeDownload(files);
-	const svc = new PhotosService({bus, paths, thumbnailer: thumbs, download});
+	// The free space and the time, as the tests set them
+	const space = {free: 64 * GB};
+	const clock = {t: Date.UTC(2026, 10, 1)};
+	const statfs = async () => ({bavail: Math.floor(space.free / 4096), bsize: 4096});
+	const svc = new PhotosService({bus, paths, thumbnailer: thumbs, download, statfs, now: () => clock.t});
 	t.after(() => svc.stop());
 	const api = methods(svc);
 	// A sync, and every album it brought opened, as the app opens one: everything comes down
@@ -90,7 +95,7 @@ function setup(t, {albums, photos} = {}) {
 		}
 		return r;
 	};
-	return {root, bus, cloud, files, paths, thumbs, download, svc, api, sync};
+	return {root, bus, cloud, files, paths, thumbs, download, svc, api, sync, space, clock, statfs};
 }
 
 const photosOf = (bus, accountId) =>
@@ -981,4 +986,274 @@ test('turning the photos off stops an album being listed', async t => {
 	await off;
 	assert.equal(photosOf(bus, 'acct1').length, 0);
 	assert.deepEqual(await api.syncAlbum({albumId: cam._id}), {returnValue: true, skipped: 'disabled'});
+});
+
+// ---- storage -------------------------------------------------------------------------------
+
+// A JPEG of `bytes` bytes (its header, then padding)
+const sizedJpeg = bytes => Buffer.concat([jpeg(4000, 3000), Buffer.alloc(Math.max(0, bytes - jpeg(4000, 3000).length))]);
+
+// A gallery with previews, three photos of 10 KB whole; the cap set (as only a test may) to 25 KB
+function withBudget(t, opts) {
+	const ctx = withPreviews(t, opts);
+	ctx.cloud.photos.Holidays.push({pid: 'Holidays/c.jpg', src_big: 'https://g.example/c.jpg', src_small: 'https://g.example/c.jpg/320',
+		type: 'image', fileName: 'c.jpg'});
+	ctx.cloud.albums[0].size = {images: 3};
+	ctx.files.set('https://g.example/c.jpg/320', jpeg(320, 240));
+	for (const n of ['a', 'b', 'c']) {
+		ctx.files.set(`https://g.example/${n}.jpg`, sizedJpeg(10000));
+	}
+	ctx.svc.storage.settings.capBytes = 25000;
+	const byPid = pid => photosOf(ctx.bus, 'acct1').find(p => p[TPL].pid === `Holidays/${pid}.jpg`);
+	return Object.assign(ctx, {byPid});
+}
+
+test('storage: whole pictures past the cap go back to their preview, those opened longest ago first', async t => {
+	const {svc, api, sync, clock, byPid, download} = withBudget(t);
+	await svc.start();
+	await sync();
+	const thumbA = byPid('a').appGridThumbnail.path;
+	await api.fetchOriginal({_id: byPid('a')._id});
+	clock.t += 1000;
+	await svc.bigView(byPid('a')._id);          // its screen-size copy made
+	const screenA = byPid('a').appScreenNail.path;
+	const wholeA = byPid('a').path;
+	clock.t += 1000;
+	await api.fetchOriginal({_id: byPid('b')._id});
+	clock.t += 1000;
+	assert.equal(byPid('a').original, 'local');
+	assert.equal(byPid('b').original, 'local', 'two fit');
+
+	await api.fetchOriginal({_id: byPid('c')._id});
+	const a = byPid('a');
+	assert.equal(a.original, 'remote', 'the one opened longest ago goes');
+	assert.equal(a.path, thumbA, 'its grid thumbnail stands in');
+	assert.equal(a.appOriginal, null);
+	assert.equal(a.appScreenNail, null);
+	assert.ok(!fs.existsSync(wholeA) && !fs.existsSync(screenA) && fs.existsSync(thumbA));
+	assert.equal(byPid('b').original, 'local');
+	assert.equal(byPid('c').original, 'local');
+
+	// Opened, b is the newest: fetching a again drops c, and leaves a's thumbnail
+	clock.t += 1000;
+	await svc.bigView(byPid('b')._id);
+	clock.t += 1000;
+	const n = download.fetched.length;
+	await svc.bigView(byPid('a')._id);
+	assert.deepEqual(download.fetched.slice(n).map(f => f.url), ['https://g.example/a.jpg']);
+	assert.equal(byPid('a').original, 'local');
+	assert.ok(fs.existsSync(thumbA), 'the thumbnail is no preview to remove');
+	assert.equal(byPid('b').original, 'local');
+	assert.equal(byPid('c').original, 'remote');
+
+	const info = await api.getStorage({});
+	assert.equal(info.returnValue, true);
+	assert.deepEqual(info.originals, {count: 2, bytes: 20000});
+	assert.equal(info.capBytes, 25000);
+	assert.equal(info.capNowBytes, 25000);
+	assert.equal(info.freeBytes, 64 * GB);
+	assert.equal(info.floorBytes, 1024 * 1024 * 1024);
+	assert.equal(info.expireDays, 30);
+	assert.ok(info.otherBytes > 0, 'previews and thumbnails');
+});
+
+test('storage: a whole-file connector\'s photos past the cap keep only their thumbnails, and come back when opened', async t => {
+	const whole = n => ({pid: `id:${n}`, src_big: `https://dl.example/t/${n}`, type: 'image', fileName: `${n}.jpg`});
+	const {bus, svc, api, sync, files, cloud, clock} = setup(t, {albums: [{aid: '/Cam', name: 'Cam', size: {images: 2}}],
+		photos: {'/Cam': [whole('p1'), whole('p2')]}});
+	for (const n of ['p1', 'p2', 'p3', 'p4']) {
+		files.set(`https://dl.example/t/${n}`, sizedJpeg(10000));
+	}
+	svc.storage.settings.capBytes = 15000;
+	await svc.start();
+	// The second is past the cap before any thumbnail is made: dropped once they are
+	await sync();
+	const onDisk = () => photosOf(bus, 'acct1').filter(p => p.original !== 'remote');
+	assert.equal(onDisk().length, 1, 'once the album is listed');
+	// New photos at a sync: the same
+	clock.t += 1000;
+	cloud.photos['/Cam'].push(whole('p3'), whole('p4'));
+	await api.syncSingleAccount({accountId: 'acct1'});
+	assert.equal(onDisk().length, 1, 'once the sync is done');
+	assert.equal(onDisk()[0][TPL].pid, 'id:p4', 'the newest');
+	const photos = photosOf(bus, 'acct1');
+	const kept = photos.filter(p => p.original !== 'remote');
+	const dropped = photos.filter(p => p.original === 'remote');
+	assert.ok(dropped.length >= 1, 'past the cap: dropped');
+	assert.ok(kept.reduce((s, p) => s + fs.statSync(p.path).size, 0) <= 15000);
+	for (const p of dropped) {
+		assert.equal(p.path, p.appGridThumbnail.path);
+	}
+	// Opened again: listed for its link (Dropbox has no getPhoto), and whole
+	const again = await api.fetchOriginal({_id: dropped[0]._id});
+	assert.ok(fs.statSync(again.path).size > 1000);
+	assert.equal(photosOf(bus, 'acct1').find(p => p._id === dropped[0]._id).original, 'local');
+});
+
+test('storage: nothing comes down while less than 1 GB is free', async t => {
+	const {bus, svc, api, sync, space, byPid, download} = withBudget(t);
+	await svc.start();
+	await sync();
+	space.free = 900 * 1024 * 1024;
+	svc.storage.freeAt = 0;
+	const n = download.fetched.length;
+	await assert.rejects(api.fetchOriginal({_id: byPid('a')._id}), /not enough free space/);
+	assert.equal(download.fetched.length, n);
+	// A new album: listed, and nothing fetched
+	bus.providers[SVC].listAlbums = () => ({returnValue: true, albums: [{aid: 'More', name: 'More', size: {images: 1}}]});
+	bus.providers[SVC].listPhotos = () => ({returnValue: true, photos: [{pid: 'More/x.jpg', src_big: 'https://g.example/x.jpg', type: 'image'}]});
+	await api.syncSingleAccount({accountId: 'acct1'});
+	const more = albumsOf(bus, 'acct1').find(a => a.name === 'More');
+	await assert.rejects(api.syncAlbum({albumId: more._id}), /not enough free space/);
+	assert.equal(download.fetched.length, n);
+});
+
+test('storage: the cap is 5% of the space there is for the pictures when that is less', async t => {
+	const {svc, api, sync, space, byPid} = withBudget(t);
+	await svc.start();
+	await sync();
+	svc.storage.settings.capBytes = 1024 * 1024 * 1024;
+	space.free = 1.5 * GB;
+	svc.storage.freeAt = 0;
+	const info = await api.getStorage({});
+	assert.equal(info.capNowBytes, Math.floor(1.5 * GB * 0.05));
+	await api.fetchOriginal({_id: byPid('a')._id});
+	assert.equal(byPid('a').original, 'local');
+});
+
+test('storage: setStorage takes one of the sizes offered; a smaller one drops pictures at once', async t => {
+	const {svc, api, sync, clock, byPid} = withBudget(t);
+	await svc.start();
+	await sync();
+	for (const n of ['a', 'b']) {
+		clock.t += 1000;
+		await api.fetchOriginal({_id: byPid(n)._id});
+	}
+	assert.equal((await api.setStorage({})).returnValue, false);
+	await assert.rejects(api.setStorage({capBytes: 12345}), /capBytes: one of/);
+	const r = await api.setStorage({capBytes: 100 * 1024 * 1024});
+	assert.equal(r.capBytes, 100 * 1024 * 1024);
+	assert.deepEqual(r.capChoices.map(b => b / 1024 / 1024), [100, 200, 500, 1024, 2048]);
+	// Kept across a restart of the service
+	const again = new (require('../lib/storage').Storage)({paths: svc.paths, statfs: svc.storage.statfs});
+	await again.load();
+	assert.equal(again.settings.capBytes, 100 * 1024 * 1024);
+	assert.deepEqual([...again.originals.keys()].sort(), [byPid('a')._id, byPid('b')._id].sort());
+	// Smaller than what is here: the oldest goes now
+	svc.storage.settings.capBytes = 15000;
+	await svc.syncer.budget();
+	assert.equal(byPid('a').original, 'remote');
+	assert.equal(byPid('b').original, 'local');
+});
+
+test('storage: an album kept on the device comes down whole, counts for no cap, and never goes', async t => {
+	const {bus, svc, api, byPid, clock} = withBudget(t);
+	await svc.start();
+	await api.syncSingleAccount({accountId: 'acct1'});
+	assert.equal(albumsOf(bus, 'acct1')[0].listed, false, 'not opened: keeping it lists it');
+	svc.storage.settings.capBytes = 15000;
+	const album = albumsOf(bus, 'acct1')[0];
+	assert.equal((await api.keepAlbum({albumId: album._id})).returnValue, false, 'keep: true or false');
+	await assert.rejects(api.keepAlbum({albumId: 'nope', keep: true}), /no cloud album/);
+	const r = await api.keepAlbum({albumId: album._id, keep: true});
+	assert.deepEqual(r, {returnValue: true, keep: true, photos: 3, fetched: 3, failed: 0});
+	assert.ok(['a', 'b', 'c'].every(n => byPid(n).original === 'local'), 'all whole, past the cap');
+	assert.equal(albumsOf(bus, 'acct1')[0].keep, true);
+	let info = await api.getStorage({});
+	assert.deepEqual(info.kept, {albums: 1, count: 3, bytes: 30000});
+	assert.deepEqual(info.originals, {count: 0, bytes: 0});
+	// Not opened for long: kept, it stays
+	clock.t += 40 * 86400 * 1000;
+	await api.syncSingleAccount({accountId: 'acct1'});
+	assert.equal(albumsOf(bus, 'acct1')[0].listed, true);
+	assert.equal(photosOf(bus, 'acct1').length, 3);
+	// No longer kept: they count again, and go down to the cap
+	assert.deepEqual(await api.keepAlbum({albumId: album._id, keep: false}), {returnValue: true, keep: false});
+	info = await api.getStorage({});
+	assert.ok(info.originals.bytes <= 15000);
+	assert.equal(['a', 'b', 'c'].filter(n => byPid(n).original === 'local').length, 1);
+});
+
+test('storage: an album not opened for 30 days goes back to unopened; its cover comes down', async t => {
+	const {bus, svc, api, sync, clock, files, cloud, byPid} = withBudget(t);
+	cloud.albums[0].cover = 'https://g.example/cover.jpg/240';
+	cloud.albums.push({aid: 'Other', name: 'Other', size: {images: 1}});
+	cloud.photos.Other = [{pid: 'Other/o.jpg', src_big: 'https://g.example/o.jpg', type: 'image', fileName: 'o.jpg'}];
+	files.set('https://g.example/o.jpg', jpeg(800, 600));
+	files.set('https://g.example/cover.jpg/240', jpeg(240, 180));
+	await svc.start();
+	await sync();
+	await api.fetchOriginal({_id: byPid('a')._id});
+	const holidays = () => albumsOf(bus, 'acct1').find(a => a.name === 'Holidays');
+	const other = () => albumsOf(bus, 'acct1').find(a => a.name === 'Other');
+	assert.equal(holidays().openedTime, Math.floor(clock.t / 1000));
+	const files0 = photosOf(bus, 'acct1').filter(p => p.albumId === holidays()._id).map(p => p.path);
+
+	clock.t += 20 * 86400 * 1000;
+	await api.syncAlbum({albumId: other()._id});            // opened again: from now
+	clock.t += 11 * 86400 * 1000;
+	await api.syncSingleAccount({accountId: 'acct1'});
+	assert.equal(holidays().listed, false, '31 days: unopened');
+	assert.equal(photosOf(bus, 'acct1').filter(p => p.albumId === holidays()._id).length, 0);
+	assert.ok(files0.every(f => !fs.existsSync(f)));
+	assert.ok(holidays().coverPath && fs.existsSync(holidays().coverPath), 'its cover instead');
+	assert.equal(other().listed, true, '11 days: still opened');
+	assert.equal((await api.getStorage({})).originals.count, 1, 'Other\'s whole picture only');
+
+	// One opened before openedTime was kept: from now
+	delete bus.db.objects.get(other()._id).openedTime;
+	clock.t += 60 * 86400 * 1000;
+	await api.syncSingleAccount({accountId: 'acct1'});
+	assert.equal(other().listed, true);
+	assert.equal(other().openedTime, Math.floor(clock.t / 1000));
+});
+
+test('storage: clearDownloads takes every opened album not kept back to unopened', async t => {
+	const {bus, svc, api, sync, cloud, files, byPid} = withBudget(t);
+	cloud.albums.push({aid: 'Other', name: 'Other', size: {images: 1}});
+	cloud.photos.Other = [{pid: 'Other/o.jpg', src_big: 'https://g.example/o.jpg', type: 'image', fileName: 'o.jpg'}];
+	files.set('https://g.example/o.jpg', jpeg(800, 600));
+	await svc.start();
+	await sync();
+	const other = albumsOf(bus, 'acct1').find(a => a.name === 'Other');
+	await api.keepAlbum({albumId: other._id, keep: true});
+	await api.fetchOriginal({_id: byPid('a')._id});
+	const r = await api.clearDownloads({});
+	assert.equal(r.returnValue, true);
+	assert.deepEqual(r.cleared, {albums: 1, photos: 3});
+	assert.deepEqual(r.originals, {count: 0, bytes: 0});
+	assert.equal(albumsOf(bus, 'acct1').find(a => a.name === 'Holidays').listed, false);
+	assert.equal(albumsOf(bus, 'acct1').find(a => a.name === 'Other').listed, true, 'kept: stays');
+	assert.equal(photosOf(bus, 'acct1').length, 1);
+});
+
+test('storage: whole pictures here before there was a ledger are counted; removed photos no longer', async t => {
+	const {bus, svc, sync, paths} = setup(t);
+	await svc.start();
+	await sync();
+	fs.unlinkSync(path.join(paths.cache, '.storage.json'));
+	const svc2 = new PhotosService({bus, paths, thumbnailer: new FakeThumbnailer(), download: svc.syncer.download,
+		statfs: svc.storage.statfs, now: svc.storage.now});
+	t.after(() => svc2.stop());
+	const api2 = methods(svc2);
+	await svc2.start();
+	await api2.syncSingleAccount({accountId: 'acct1'});
+	const photos = photosOf(bus, 'acct1');
+	assert.equal((await api2.getStorage({})).originals.count, photos.length);
+	await api2.deletePhotos({specs: [{photos: [photos[0]._id]}]});
+	assert.equal((await api2.getStorage({})).originals.count, photos.length - 1);
+	assert.ok(!svc2.storage.originals.has(photos[0]._id));
+});
+
+test('storage: a picture bigger than the cap is kept while it is the one just opened', async t => {
+	const {svc, api, sync, byPid} = withBudget(t);
+	await svc.start();
+	await sync();
+	svc.storage.settings.capBytes = 5000;
+	const r = await api.fetchOriginal({_id: byPid('a')._id});
+	assert.ok(fs.existsSync(r.path));
+	assert.equal(byPid('a').original, 'local');
+	await api.fetchOriginal({_id: byPid('b')._id});
+	assert.equal(byPid('a').original, 'remote', 'the next one opened: it goes');
+	assert.equal(byPid('b').original, 'local');
 });

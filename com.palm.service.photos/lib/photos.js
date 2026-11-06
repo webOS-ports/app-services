@@ -15,7 +15,8 @@ const {capabilitiesFor, capabilityFor} = require('./capabilities');
 const {SerialQueue} = require('./queue');
 const {CacheGenerator, ownerOf} = require('./cache');
 const {Library, isCloud, ALBUM_KIND} = require('./library');
-const {SyncEngine} = require('./sync');
+const {SyncEngine, EXPIRE_DAYS} = require('./sync');
+const {Storage, sizeOf, CAP_CHOICES, FLOOR_BYTES} = require('./storage');
 const {callProvider} = require('./providers');
 const {removeDir, removeFile} = require('./files');
 const {download: defaultDownload} = require('./download');
@@ -31,7 +32,7 @@ const ACCOUNT_QUERY = {
 const SYNCSTATE_KIND = 'com.palm.account.syncstate:1';
 
 class PhotosService {
-	constructor({bus, paths, thumbnailer, download = defaultDownload}) {
+	constructor({bus, paths, thumbnailer, download = defaultDownload, statfs, now}) {
 		this.bus = bus;
 		this.paths = paths;
 		this.db = new Db(bus);
@@ -51,13 +52,15 @@ class PhotosService {
 			isCancelled: entry => this.deleting.has(entry.accountId),
 			keepAwake: name => this.keepAwake(name)
 		});
+		this.storage = new Storage({paths, statfs, now});
 		this.library = new Library({
 			db: this.db, bus, paths, accounts: this.accounts, caps: this.caps, cache: this.cache,
-			original: id => this.syncer.original(id)
+			original: id => this.syncer.original(id),
+			removed: ids => this.storage.forget(ids)
 		});
 		this.syncer = new SyncEngine({
 			db: this.db, bus, paths, accounts: this.accounts, caps: this.caps,
-			library: this.library, cache: this.cache, download
+			library: this.library, cache: this.cache, download, storage: this.storage
 		});
 		this.accounts.on('changed', payload => {
 			for (const notify of this.subscribers) {
@@ -233,8 +236,53 @@ class PhotosService {
 		const [entry] = await this.db.get([id]);
 		if (entry && entry.original === 'remote') {
 			await this.syncer.original(id);
+		} else if (entry) {
+			await this.storage.touch(id);       // opened: the last to go
 		}
 		return this.cache.screenNail(id);
+	}
+
+	// ---- storage -----------------------------------------------------------
+
+	// getStorage: what the cloud photos take, and the cap on their whole pictures
+	async storageInfo() {
+		await this.start();
+		await this.storage.load();
+		const kept = await this.syncer.keptAlbums();
+		const use = this.storage.usage(kept);
+		const all = await sizeOf(this.paths.cache);
+		return {
+			capBytes: this.storage.settings.capBytes,
+			capChoices: CAP_CHOICES,
+			capNowBytes: await this.storage.cap(kept),
+			floorBytes: FLOOR_BYTES,
+			freeBytes: await this.storage.free(true),
+			expireDays: EXPIRE_DAYS,
+			originals: use.originals,
+			kept: Object.assign({albums: kept.size}, use.kept),
+			otherBytes: Math.max(0, all - use.originals.bytes - use.kept.bytes)
+		};
+	}
+
+	// setStorage {capBytes}
+	async setStorage(capBytes) {
+		await this.start();
+		await this.storage.setCap(capBytes);
+		await this.syncer.budget();
+		return this.storageInfo();
+	}
+
+	// clearDownloads: the opened albums not kept back to unopened
+	async clearDownloads() {
+		await this.start();
+		const r = await this.syncer.clear();
+		return Object.assign({cleared: r}, await this.storageInfo());
+	}
+
+	// keepAlbum {albumId, keep}
+	async keepAlbum(albumId, keep) {
+		await this.start();
+		return this.syncer.keepAlbum(albumId, keep);
 	}
 
 	// ---- accounts ----------------------------------------------------------
