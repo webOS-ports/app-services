@@ -35,7 +35,7 @@ A connector's service answers:
 
 | method | parameters | answer |
 |---|---|---|
-| `listAlbums` | `accountId` | `albums: [{aid, name, size: {images, videos}, parentAid}]` |
+| `listAlbums` | `accountId` | `albums: [{aid, name, size: {images, videos}, parentAid, cover}]`, `headers` |
 | `listPhotos` | `accountId, aid` | `photos: [{pid, src_big, src_small, caption, type, fileName}]`, `headers` |
 | `getPhoto` (optional) | `accountId, aid, pid` | `src_big`, `headers`, `fileName` |
 | `upload` | `accountId, albumId (the aid), path` | `pid` |
@@ -46,6 +46,18 @@ Only what is looked at comes down. A sync lists the albums
 app has opened it (`syncAlbum`; its entry is then `listed: true`), and
 with every sync from then on. An album synced by an older service is
 taken as listed when it has photos here.
+
+`cover`, when given, is a link to a small picture of the album
+(PiGallery2's thumbnail of the photo it shows on the folder). It comes
+down, four at a time, for each album that shows no photos of its own
+(one not opened yet, or one with only sub-albums), with the listing's
+`headers`,
+into the album's directory as `.cover-<hash>`, and the entry's
+`coverPath` names it: the app shows it on the album until the album's
+own photos are here. The link without its query tells one cover from
+another, so a token that changes fetches nothing again. A cover that
+does not come down, or is no picture, leaves the album without one; it
+fails no sync.
 
 Of a photo whose `src_small` is a link of its own (not the same as
 `src_big`: PiGallery2's, Immich's and PhotoPrism's thumbnails) only that
