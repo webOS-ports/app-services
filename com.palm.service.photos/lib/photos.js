@@ -52,7 +52,8 @@ class PhotosService {
 			keepAwake: name => this.keepAwake(name)
 		});
 		this.library = new Library({
-			db: this.db, bus, paths, accounts: this.accounts, caps: this.caps, cache: this.cache
+			db: this.db, bus, paths, accounts: this.accounts, caps: this.caps, cache: this.cache,
+			original: id => this.syncer.original(id)
 		});
 		this.syncer = new SyncEngine({
 			db: this.db, bus, paths, accounts: this.accounts, caps: this.caps,
@@ -86,7 +87,7 @@ class PhotosService {
 
 	// True while anything is going on that the process should stay up for
 	get busy() {
-		return this.subscribers.size > 0 || this.syncer.running.size > 0 || !!this.cache.running ||
+		return this.subscribers.size > 0 || this.syncer.running.size > 0 || this.syncer.busy || !!this.cache.running ||
 			this.queue.busy || this.deleting.size > 0 || !!this.leftovers;
 	}
 
@@ -208,6 +209,32 @@ class PhotosService {
 				await this.tempdb.del([stateId]).catch(() => {});
 			}
 		}
+	}
+
+	// syncAlbum {albumId}: a cloud album the app shows, its photos listed (and kept up to date
+	// from then on) and their previews brought down
+	async syncAlbum(albumId) {
+		await this.start();
+		return this.syncer.openAlbum(albumId);
+	}
+
+	// fetchOriginal {_id}: the photo's whole picture on the device, for whatever needs the
+	// file itself (sharing, printing, the wallpaper); its path
+	async fetchOriginal(id) {
+		await this.start();
+		return this.syncer.original(id);
+	}
+
+	// generateImgForBigView: the screen-size copy, from the whole picture. One of which only
+	// the preview is here is fetched first; when it cannot be, no copy is made, and the app
+	// shows the preview.
+	async bigView(id) {
+		await this.start();
+		const [entry] = await this.db.get([id]);
+		if (entry && entry.original === 'remote') {
+			await this.syncer.original(id);
+		}
+		return this.cache.screenNail(id);
 	}
 
 	// ---- accounts ----------------------------------------------------------

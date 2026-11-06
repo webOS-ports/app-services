@@ -43,8 +43,9 @@ function isCloud(entry) {
 }
 
 class Library {
-	constructor({db, bus, paths, accounts, caps, cache}) {
+	constructor({db, bus, paths, accounts, caps, cache, original = null}) {
 		this.db = db;
+		this.original = original;   // _id -> the path of the photo's whole picture, fetched if need be
 		this.bus = bus;
 		this.paths = paths;
 		this.accounts = accounts;
@@ -357,7 +358,9 @@ class Library {
 	// kept in the album's directory with the id the cloud gave it, so the
 	// next sync sees it is there already.
 	async copyPhoto(photo, album) {
-		const src = photo.appOriginal || photo.path;
+		// A cloud photo of which only the preview is here: its whole picture is copied
+		const src = photo.original === 'remote' && this.original ? await this.original(photo._id) :
+			(photo.appOriginal || photo.path);
 		if (!src || !this.paths.inMedia(src)) {
 			throw new Error(`no file for photo ${photo._id}`);
 		}

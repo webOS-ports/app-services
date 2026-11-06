@@ -16,6 +16,15 @@
 //
 // An album may be in another (parentAid): its entry gets that album's _id as
 // parentId, and the app shows it inside that one.
+//
+// Nothing more comes down than is looked at. A sync brings the albums only;
+// an album's photos are listed once it has been opened (syncAlbum, which the
+// app calls when it shows the album: the entry is then `listed`), and from
+// then on with every sync. Of each photo only its preview comes down where
+// the connector has one (src_small, when it is not the same link as
+// src_big): the entry is `original: "remote"`, its path the preview's file.
+// The full picture comes down when it is wanted (original(): the picture is
+// opened, shared, printed), from a fresh link, as the links are kept nowhere.
 
 const fsp = require('fs').promises;
 const path = require('path');
@@ -27,6 +36,7 @@ const {ALBUM_KIND, MEDIA_KIND, IMAGE_KIND, VIDEO_KIND, safeExt} = require('./lib
 
 const LIST_TIMEOUT_MS = 60000;
 const LIST_ATTEMPTS = 3;
+const REMOTE = 'remote';
 
 class SyncEngine {
 	constructor({db, bus, paths, accounts, caps, library, cache, download}) {
@@ -39,10 +49,40 @@ class SyncEngine {
 		this.cache = cache;
 		this.download = download;
 		this.running = new Map();      // accountId -> {promise, controller}
+		this.albums = new Map();       // album _id -> the promise of its photos' sync
+		this.originals = new Map();    // photo _id -> the promise of its full picture
+		this.work = new Map();         // accountId -> Set of the AbortControllers of syncAlbum and original
+		this.writing = new Set();      // files written whose entry has not caught up yet: the sweep leaves them
+		this.noGetPhoto = new Set();   // services that have no getPhoto
 	}
 
 	isSyncing(accountId) {
 		return this.running.has(accountId);
+	}
+
+	// True while an album or a full picture is being fetched
+	get busy() {
+		return this.albums.size > 0 || this.originals.size > 0;
+	}
+
+	// fn(signal) as work of the account that cancel() stops
+	async forAccount(accountId, fn) {
+		const controller = new AbortController();
+		if (!this.work.has(accountId)) {
+			this.work.set(accountId, new Set());
+		}
+		const set = this.work.get(accountId);
+		const entry = {controller, promise: null};
+		set.add(entry);
+		try {
+			entry.promise = fn(controller.signal);
+			return await entry.promise;
+		} finally {
+			set.delete(entry);
+			if (!set.size) {
+				this.work.delete(accountId);
+			}
+		}
 	}
 
 	// Syncs an account; while it syncs, a second call gets the same promise.
@@ -66,14 +106,67 @@ class SyncEngine {
 		return promise;
 	}
 
-	// Stops an account's sync; resolves once it has stopped.
+	// Stops an account's sync, and its albums and pictures being fetched; resolves once they have stopped.
 	async cancel(accountId) {
+		const waits = [];
 		const current = this.running.get(accountId);
-		if (!current) {
-			return;
+		if (current) {
+			current.controller.abort(new Error('sync cancelled'));
+			waits.push(current.promise);
 		}
-		current.controller.abort(new Error('sync cancelled'));
-		await current.promise.catch(() => {});
+		for (const entry of this.work.get(accountId) || []) {
+			entry.controller.abort(new Error('sync cancelled'));
+			if (entry.promise) {
+				waits.push(entry.promise);
+			}
+		}
+		await Promise.all(waits.map(p => p.catch(() => {})));
+	}
+
+	// syncAlbum {albumId}: the album's photos, listed and their previews brought down, now and
+	// with every sync from then on. Resolves when its thumbnails are made.
+	async openAlbum(albumId) {
+		const [album] = albumId ? await this.db.get([albumId]) : [];
+		if (!album || album._del || album._kind !== ALBUM_KIND || !album.accountId || album.accountId === 'local') {
+			throw new Error(`no cloud album ${albumId}`);
+		}
+		const account = this.accounts.get(album.accountId);
+		if (!account) {
+			throw new Error(`no cloud account ${album.accountId}`);
+		}
+		if (!account.isEnabled) {
+			return {skipped: 'disabled'};
+		}
+		const cap = this.caps(account.templateId);
+		if (!cap || !cap.getPhotos || !cap.serviceName) {
+			return {photos: 0};
+		}
+		const acc = Object.assign({accountId: album.accountId}, account);
+		return this.accounts.track(album.accountId, 'sync', () => this.forAccount(album.accountId, async signal => {
+			if (album.listed !== true) {
+				await this.db.merge([{_id: album._id, listed: true}]);
+				album.listed = true;
+			}
+			if (!this.paths.inCache(album.path)) {
+				return {photos: 0};
+			}
+			await this.photosOf(acc, cap, album, false, signal);
+			signal.throwIfAborted();
+			await this.cache.run();
+			return {photos: (await this.db.find({from: MEDIA_KIND, where: [{prop: 'albumId', op: '=', val: album._id}]})).length};
+		}));
+	}
+
+	// An album's photos: one sync of them at a time, whoever asks
+	photosOf(account, cap, album, isNew, signal) {
+		const current = this.albums.get(album._id);
+		if (current) {
+			return current;
+		}
+		const promise = this.syncAlbum(account, cap, album, isNew, signal)
+			.finally(() => this.albums.delete(album._id));
+		this.albums.set(album._id, promise);
+		return promise;
 	}
 
 	async syncAccount(account, signal) {
@@ -145,8 +238,11 @@ class SyncEngine {
 
 		for (const {album, isNew} of synced.values()) {
 			signal.throwIfAborted();
+			if (album.listed !== true) {
+				continue;      // not opened yet: its photos are listed when it is
+			}
 			try {
-				await this.syncAlbum(account, cap, album, isNew, signal);
+				await this.photosOf(account, cap, album, isNew, signal);
 			} catch (e) {
 				if (signal.aborted) {
 					throw signal.reason;
@@ -210,6 +306,7 @@ class SyncEngine {
 			aid: r.aid,
 			accountId: account.accountId,
 			showAlbum: true,
+			listed: false,
 			searchKey: r.name || '',
 			modifiedTime: nowSeconds()
 		};
@@ -235,6 +332,10 @@ class SyncEngine {
 		}
 		if (album.showAlbum !== true) {
 			change.showAlbum = true;
+		}
+		// An album synced before albums were listed only when opened: listed when it has photos here
+		if (album.listed !== true && album.listed !== false) {
+			change.listed = (await this.db.find({from: MEDIA_KIND, where: [{prop: 'albumId', op: '=', val: album._id}]}, 1)).length > 0;
 		}
 		if (!cap.computeNumFiles && r.size) {
 			const t = total(r.size);
@@ -337,13 +438,15 @@ class SyncEngine {
 		}
 	}
 
-	// Downloads one photo and writes its entry
+	// Downloads one photo, or its preview, and writes its entry
 	async fetchPhoto(account, album, p, signal, headers) {
-		const url = p.src_big || p.src_small;
+		const video = p.type === 'video';
+		// The preview where there is one of its own; the picture itself comes down when it is wanted
+		const preview = !video && isLink(p.src_small) && isLink(p.src_big) && p.src_small !== p.src_big;
+		const url = preview ? p.src_small : (p.src_big || p.src_small);
 		if (!url) {
 			throw new Error('no URL to download from');
 		}
-		const video = p.type === 'video';
 		const file = await this.targetFor(album, p, url);
 		// A provider's temporary copy (temporary:true) is removed once it is copied
 		const opts = {signal, localRoot: this.paths.media, removeSource: p.temporary === true};
@@ -357,15 +460,7 @@ class SyncEngine {
 		if (!video) {
 			const info = await probe(file);
 			readable = !!info;
-			if (info && path.extname(file).toLowerCase() !== `.${info.ext}` &&
-					!(info.ext === 'jpg' && path.extname(file).toLowerCase() === '.jpeg')) {
-				let named = path.join(path.dirname(file), `${path.basename(file, path.extname(file))}.${info.ext}`);
-				if (await exists(named) && await this.inUse(named)) {
-					named = await freeName(path.dirname(file), path.basename(named));
-				}
-				await fsp.rename(file, named);
-				finalPath = named;
-			}
+			finalPath = await this.namedFor(file, info);
 		}
 
 		const nested = {pid: p.pid};
@@ -385,9 +480,13 @@ class SyncEngine {
 			type: account.templateId,
 			appCacheComplete: readable ? 'unattempted' : false,
 			path: finalPath,
-			appOriginal: finalPath,
 			createdTime: typeof p.createdTime === 'number' ? p.createdTime : nowSeconds()
 		};
+		if (preview) {
+			entry.original = REMOTE;
+		} else {
+			entry.appOriginal = finalPath;
+		}
 		if (p.caption !== undefined) {
 			entry.caption = p.caption;
 		}
@@ -398,6 +497,117 @@ class SyncEngine {
 			await removeFile(this.paths, finalPath).catch(() => {});
 			throw e;
 		}
+	}
+
+	// The file named for what it turned out to be (its extension); the name it ends up with.
+	async namedFor(file, info) {
+		if (!info || path.extname(file).toLowerCase() === `.${info.ext}` ||
+				(info.ext === 'jpg' && path.extname(file).toLowerCase() === '.jpeg')) {
+			return file;
+		}
+		let named = path.join(path.dirname(file), `${path.basename(file, path.extname(file))}.${info.ext}`);
+		if (await exists(named) && await this.inUse(named)) {
+			named = await freeName(path.dirname(file), path.basename(named));
+		}
+		await fsp.rename(file, named);
+		return named;
+	}
+
+	// The full picture of a photo of which only the preview came down (original "remote"):
+	// downloaded next to it, which it then replaces. Resolves with the entry's path, at once
+	// for a photo that is here whole. One download per photo, whoever asks.
+	original(id) {
+		const current = this.originals.get(id);
+		if (current) {
+			return current;
+		}
+		const promise = this.fetchOriginal(id).finally(() => this.originals.delete(id));
+		this.originals.set(id, promise);
+		return promise;
+	}
+
+	async fetchOriginal(id) {
+		const [entry] = id ? await this.db.get([id]) : [];
+		if (!entry || entry._del || !entry.path) {
+			throw new Error(`no photo ${id}`);
+		}
+		if (entry.original !== REMOTE) {
+			return entry.path;
+		}
+		const account = this.accounts.get(entry.accountId);
+		const cap = account && account.isEnabled ? this.caps(account.templateId) : null;
+		const nested = entry[entry.type];
+		const [album] = entry.albumId ? await this.db.get([entry.albumId]) : [];
+		if (!cap || !cap.serviceName || !nested || nested.pid === undefined || !album || album._del ||
+				!this.paths.inCache(album.path)) {
+			throw new Error(`the picture of ${id} cannot be fetched: its account or album is gone`);
+		}
+		return this.forAccount(entry.accountId, async signal => {
+			const link = await this.linkFor(Object.assign({accountId: entry.accountId}, account), cap, album, nested.pid, signal);
+			const file = await this.targetFor(album, {pid: nested.pid, fileName: link.fileName || nested.fileName}, link.url);
+			const opts = {signal, localRoot: this.paths.media, removeSource: link.temporary === true};
+			if (link.headers) {
+				opts.headers = link.headers;
+			}
+			this.writing.add(file);
+			let finalPath = file;
+			try {
+				await this.download(link.url, file, opts);
+				finalPath = await this.namedFor(file, await probe(file));
+				this.writing.add(finalPath);
+				signal.throwIfAborted();
+				await this.db.merge([{_id: entry._id, path: finalPath, appOriginal: finalPath, original: 'local'}]);
+			} catch (e) {
+				await removeFile(this.paths, finalPath).catch(() => {});
+				throw e;
+			} finally {
+				this.writing.delete(file);
+				this.writing.delete(finalPath);
+			}
+			if (entry.path !== finalPath) {
+				await removeFile(this.paths, entry.path).catch(e => log.warn(`the preview of ${id} stays: ${e.message}`));
+			}
+			return finalPath;
+		});
+	}
+
+	// A fresh link to a photo's full picture: the connector's getPhoto {accountId, aid, pid}
+	// -> {src_big, headers}, or, where it has none, the album listed again.
+	async linkFor(account, cap, album, pid, signal) {
+		if (!this.noGetPhoto.has(cap.serviceName)) {
+			try {
+				const r = await callProvider(this.bus, cap, 'getPhoto', {accountId: account.accountId, aid: album.aid, pid},
+					{timeoutMs: LIST_TIMEOUT_MS, signal});
+				if (isLink(r.src_big)) {
+					return {url: r.src_big, headers: downloadHeaders(r.headers), fileName: r.fileName,
+						temporary: r.temporary === true};
+				}
+				log.warn(`${cap.serviceName}/getPhoto gave no src_big; listing the album instead`);
+			} catch (e) {
+				if (signal.aborted) {
+					throw signal.reason;
+				}
+				if (isUnknownMethod(e)) {
+					this.noGetPhoto.add(cap.serviceName);
+				} else {
+					log.warn(`${cap.serviceName}/getPhoto: ${e.message}; listing the album instead`);
+				}
+			}
+		}
+		const others = await this.db.find({from: MEDIA_KIND, where: [{prop: 'albumId', op: '=', val: album._id}]});
+		const tpl = account.templateId;
+		const have = others.map(o => o[tpl] && o[tpl].pid).filter(x => x !== undefined && String(x) !== String(pid)).map(String);
+		const params = {accountId: account.accountId, aid: album.aid, have};
+		if (tpl === 'com.palm.snapfish') {
+			params.albumId = album.aid;
+		}
+		const listed = await callProvider(this.bus, cap, 'listPhotos', params,
+			{timeoutMs: LIST_TIMEOUT_MS, attempts: LIST_ATTEMPTS, signal});
+		const p = (listed.photos || []).find(x => x && x.pid !== undefined && x.pid !== null && String(x.pid) === String(pid));
+		if (!p || !isLink(p.src_big)) {
+			throw new Error(`photo ${pid} is not in ${album.name} any more`);
+		}
+		return {url: p.src_big, headers: downloadHeaders(listed.headers), fileName: p.fileName, temporary: p.temporary === true};
 	}
 
 	// Where a photo goes: the name the service gives (fileName), else the
@@ -436,7 +646,7 @@ class SyncEngine {
 			return 0;
 		}
 		const entries = await this.db.find({from: MEDIA_KIND, where: [{prop: 'albumId', op: '=', val: album._id}]});
-		const kept = new Set(entries.map(e => e.path));
+		const kept = new Set(entries.map(e => e.path).concat([...this.writing]));
 		let removed = 0;
 		for (const name of names) {
 			const file = path.join(album.path, name);
@@ -452,6 +662,16 @@ class SyncEngine {
 		}
 		return removed;
 	}
+}
+
+const isLink = v => typeof v === 'string' && v !== '';
+
+// A call that will not work however often it is tried: the connector has no such method (one
+// from before getPhoto), or its ACG does not let it be called
+function isUnknownMethod(e) {
+	const r = e && e.response;
+	const text = String((r && r.errorText) || (e && e.message) || '');
+	return /unknown method|no such method|method not found|not permitted|denied method/i.test(text);
 }
 
 // A listed album's parentAid, as the aids are keyed: a string or a number, else none.

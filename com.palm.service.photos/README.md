@@ -5,9 +5,10 @@ The photos service of webOS 3.0 (the "Photos & Videos" aggregator),
 written anew for LuneOS. It:
 
 * brings the photos of every account with the `PHOTO.UPLOAD` capability
-  down to the device: each cloud album becomes a
-  `com.palm.media.image.album:1` entry, each photo a
-  `com.palm.media.image.file:1` entry with the file under
+  to the device, as far as they are looked at: each cloud album becomes a
+  `com.palm.media.image.album:1` entry, and once it has been opened each
+  of its photos a `com.palm.media.image.file:1` entry with the file (or
+  its preview) under
   `/media/internal/.photosApp/<templateId>/<user>/<album>/`;
 * makes the grid thumbnail of each photo it writes, and the screen-size
   copy of any photo on request;
@@ -36,8 +37,29 @@ A connector's service answers:
 |---|---|---|
 | `listAlbums` | `accountId` | `albums: [{aid, name, size: {images, videos}, parentAid}]` |
 | `listPhotos` | `accountId, aid` | `photos: [{pid, src_big, src_small, caption, type, fileName}]`, `headers` |
+| `getPhoto` (optional) | `accountId, aid, pid` | `src_big`, `headers`, `fileName` |
 | `upload` | `accountId, albumId (the aid), path` | `pid` |
 | `deletePhoto` | `accountId, pid` | |
+
+Only what is looked at comes down. A sync lists the albums
+(`listAlbums`), not their photos: an album's photos are listed once the
+app has opened it (`syncAlbum`; its entry is then `listed: true`), and
+with every sync from then on. An album synced by an older service is
+taken as listed when it has photos here.
+
+Of a photo whose `src_small` is a link of its own (not the same as
+`src_big`: PiGallery2's, Immich's and PhotoPrism's thumbnails) only that
+preview comes down; the grid thumbnail is made from it, its file is the
+entry's `path`, and the entry has `original: "remote"` and no
+`appOriginal`. The whole picture comes down when it is wanted: when the
+photo is opened (`generateImgForBigView`, whose screen-size copy is then
+made from it, never from the preview), shared, printed or made the
+wallpaper (`fetchOriginal`), or copied to another album. It replaces the
+preview (`original: "local"`, `appOriginal` set). Its link is asked for
+then, as links are kept nowhere: with the connector's `getPhoto` when it
+has one, else by listing the album again (`have` is then every other
+photo of it). A photo whose `src_small` is its `src_big`, or that has
+none, comes down whole as it is listed, as before.
 
 `src_big` is downloaded with Node's own `fetch` (https). `fileName`, when
 given, names the file; otherwise the last part of the URL does, and the
@@ -82,6 +104,8 @@ calls those:
 | `getAccountsCapability` | `{AccountsCapability: {local: {...}, <templateId>: {...}}}` |
 | `remoteSyncAlbums`, `facebookSyncAlbums` | sync every enabled cloud account |
 | `syncSingleAccount` | `{accountId}` |
+| `syncAlbum` | `{albumId}`: the album's photos listed and their previews brought down, now and with every sync after; answers `{photos}` once the thumbnails are made |
+| `fetchOriginal` | `{_id}`: the photo's whole picture on the device; answers its `path` |
 | `onEnabled`, `onCredentialsChanged`, `onDelete`, `facebookClearCache` | the account capability hooks (`onDelete` removes what was synced) |
 | `generateThumbnails`, `cacheThumbnails` | thumbnails for every entry waiting for one |
 | `generateImgForBigView`, `facebookGenerateImgForBigView` | `{_id}`: the screen-size copy (`appScreenNail`) |

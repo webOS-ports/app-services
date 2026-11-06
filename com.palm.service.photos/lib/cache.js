@@ -125,7 +125,8 @@ class CacheGenerator {
 	screenNail(id) {
 		return this.queue.run(`screen-${id}`, async () => {
 			const [entry] = await this.db.get([id]);
-			if (!entry || entry.appScreenNail || entry.mediaType === 'video') {
+			// Not from a preview: the whole picture first (PhotosService.bigView)
+			if (!entry || entry.appScreenNail || entry.mediaType === 'video' || entry.original === 'remote') {
 				return entry && entry.appScreenNail;
 			}
 			const made = await this.make(entry, entry.path || entry.appOriginal, SCREEN);
