@@ -688,6 +688,112 @@ test('albums synced before they were listed only when opened: listed when they h
 	assert.deepEqual(photosOf(bus, 'acct1').map(p => p[TPL].pid).sort(), ['id:1', 'id:2', 'id:4']);
 });
 
+test('covers: one per album not opened yet, with the listing\'s headers, kept nowhere but its file', async t => {
+	const {bus, svc, api, cloud, files, download} = setup(t, {
+		albums: [
+			{aid: 'A', name: 'A', size: {images: 2}, cover: 'https://g.example/A/a.jpg/240?t=1'},
+			{aid: 'B', name: 'B', size: {images: 1}, cover: 'https://g.example/B/b.jpg/240'},
+			{aid: 'C', name: 'C', size: {images: 1}, cover: 'https://g.example/C/gone.jpg/240'},
+			{aid: 'D', name: 'D', size: {images: 1}, cover: 'https://g.example/D/text/240'},
+			{aid: 'E', name: 'E', size: {images: 1}},
+			{aid: 'Y', name: 'Y', size: {images: 0}, cover: 'https://g.example/Y/m/y.jpg/240'}
+		],
+		photos: {A: [{pid: 'A/a.jpg', src_big: 'https://g.example/A/a.jpg', type: 'image', fileName: 'a.jpg'}]}
+	});
+	files.set('https://g.example/A/a.jpg/240?t=1', jpeg(240, 180));
+	files.set('https://g.example/A/a.jpg/240?t=2', jpeg(240, 180));
+	files.set('https://g.example/A/z.jpg/240', png(240, 180));
+	files.set('https://g.example/B/b.jpg/240', png(240, 180));
+	files.set('https://g.example/D/text/240', Buffer.from('<html>no</html>'));
+	files.set('https://g.example/Y/m/y.jpg/240', jpeg(240, 180));
+	files.set('https://g.example/Y/m/z.jpg/240', jpeg(240, 180));
+	files.set('https://g.example/A/a.jpg', jpeg(4000, 3000));
+	const listAlbums = bus.providers[SVC].listAlbums;
+	bus.providers[SVC].listAlbums = p => Object.assign(listAlbums(p), {headers: {Cookie: 's=cover'}});
+	await svc.start();
+	assert.deepEqual(await api.syncSingleAccount({accountId: 'acct1'}), {returnValue: true}, 'a cover that fails fails no sync');
+	const byName = () => new Map(albumsOf(bus, 'acct1').map(a => [a.name, a]));
+	let albums = byName();
+	const a = albums.get('A');
+	assert.equal(path.dirname(a.coverPath), a.path);
+	assert.match(path.basename(a.coverPath), /^\.cover-[0-9a-f]{10}\.jpg$/);
+	assert.ok(fs.existsSync(a.coverPath) && fs.existsSync(albums.get('B').coverPath));
+	assert.equal(albums.get('C').coverPath, undefined, 'one that does not come down: none');
+	assert.equal(albums.get('D').coverPath, undefined, 'one that is no picture: none');
+	assert.deepEqual(fs.readdirSync(albums.get('D').path), [], 'and nothing left of it');
+	assert.equal(albums.get('E').coverPath, undefined);
+	assert.ok(download.fetched.every(f => f.headers && f.headers.Cookie === 's=cover'));
+	assert.ok(!JSON.stringify(bus.db.live('com.palm.media.image.album:1')).includes('s=cover'));
+	assert.ok(!JSON.stringify(bus.db.live('com.palm.media.image.album:1')).includes('g.example'), 'no link kept');
+
+	// Its token changed: the same cover, not fetched again
+	let n = download.fetched.length;
+	cloud.albums[0].cover = 'https://g.example/A/a.jpg/240?t=2';
+	await api.syncSingleAccount({accountId: 'acct1'});
+	assert.deepEqual(download.fetched.slice(n).map(f => f.url).filter(u => !/\/(C|D)\//.test(u)), [],
+		'only those that did not come down are tried again');
+	// Gone from the disk: fetched again
+	fs.unlinkSync(albums.get('B').coverPath);
+	await api.syncSingleAccount({accountId: 'acct1'});
+	assert.ok(fs.existsSync(albums.get('B').coverPath));
+
+	// Another cover: it replaces the one before
+	const first = a.coverPath;
+	cloud.albums[0].cover = 'https://g.example/A/z.jpg/240';
+	await api.syncSingleAccount({accountId: 'acct1'});
+	albums = byName();
+	assert.notEqual(albums.get('A').coverPath, first);
+	assert.ok(fs.existsSync(albums.get('A').coverPath) && !fs.existsSync(first));
+
+	// Opened, the album's photos show: the sweep leaves its cover, and no sync fetches another
+	await api.syncAlbum({albumId: a._id});
+	assert.ok(fs.existsSync(albums.get('A').coverPath), 'not swept');
+	n = download.fetched.length;
+	cloud.albums[0].cover = 'https://g.example/A/a.jpg/240?t=1';
+	await api.syncSingleAccount({accountId: 'acct1'});
+	assert.ok(download.fetched.slice(n).every(f => !/\/A\/.*\/240/.test(f.url)), 'an opened album: no cover');
+	// An opened album with only sub-albums: its cover still follows
+	const y = albums.get('Y');
+	await api.syncAlbum({albumId: y._id});
+	const yFirst = byName().get('Y').coverPath;
+	assert.ok(yFirst && fs.existsSync(yFirst));
+	cloud.albums[cloud.albums.length - 1].cover = 'https://g.example/Y/m/z.jpg/240';
+	await api.syncSingleAccount({accountId: 'acct1'});
+	assert.notEqual(byName().get('Y').coverPath, yFirst);
+	assert.ok(fs.existsSync(byName().get('Y').coverPath));
+
+	// Gone from the cloud: its directory and cover with it
+	const bDir = albums.get('B').path;
+	cloud.albums.splice(1, 1);
+	await api.syncSingleAccount({accountId: 'acct1'});
+	assert.ok(!fs.existsSync(bDir));
+});
+
+test('covers: four at a time', async t => {
+	const albums = [];
+	for (let i = 0; i < 11; i++) {
+		albums.push({aid: `M${i}`, name: `M${i}`, size: {images: 1}, cover: `https://g.example/M${i}/c.jpg/240`});
+	}
+	const {svc, api, files, bus} = setup(t, {albums, photos: {}});
+	for (const a of albums) {
+		files.set(a.cover, jpeg(240, 180));
+	}
+	const download = svc.syncer.download;
+	let active = 0;
+	let most = 0;
+	svc.syncer.download = async (...args) => {
+		active++;
+		most = Math.max(most, active);
+		await new Promise(r => setTimeout(r, 5));
+		active--;
+		return download(...args);
+	};
+	await svc.start();
+	await api.syncSingleAccount({accountId: 'acct1'});
+	assert.equal(most, 4);
+	assert.equal(albumsOf(bus, 'acct1').filter(a => a.coverPath).length, 11);
+});
+
 // A gallery whose photos have a preview of their own (PiGallery2, Immich, PhotoPrism)
 function withPreviews(t, {getPhoto} = {}) {
 	const ctx = setup(t, {

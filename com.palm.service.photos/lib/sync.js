@@ -235,6 +235,7 @@ class SyncEngine {
 			}
 		}
 		await this.linkParents(remoteAlbums, synced);
+		await this.coversOf(remoteAlbums, synced, downloadHeaders(remote.headers, 'listAlbums'), signal);
 
 		for (const {album, isNew} of synced.values()) {
 			signal.throwIfAborted();
@@ -292,6 +293,64 @@ class SyncEngine {
 			}
 		}
 		await this.db.merge(changes);
+	}
+
+	// The cover a connector gives an album (cover: a link to a small picture), for the app to
+	// show while the album has no photos here: those of one not opened yet are not listed, and
+	// one with only sub-albums has none.
+	// Brought down once, into the album's directory as .cover-<hash of the link>; another
+	// link replaces it. One that does not come down leaves the album without: never a failure.
+	// COVER_CONCURRENCY at a time: a gallery has hundreds of folders.
+	async coversOf(remoteAlbums, synced, headers, signal) {
+		const queue = [];
+		for (const [aid, {album}] of synced) {
+			const link = remoteAlbums.get(aid).cover;
+			// An opened album with photos of its own shows them; one with only sub-albums (a
+			// year's folder) its cover still
+			const shown = album.listed === true && !!album.total && album.total.images > 0;
+			if (!shown && isLink(link) && this.paths.inCache(album.path)) {
+				queue.push({album, link});
+			}
+		}
+		const worker = async () => {
+			while (queue.length) {
+				signal.throwIfAborted();
+				const {album, link} = queue.shift();
+				await this.coverOf(album, link, headers, signal);
+			}
+		};
+		await Promise.all(Array.from({length: Math.min(COVER_CONCURRENCY, queue.length)}, worker));
+	}
+
+	async coverOf(album, link, headers, signal) {
+		const key = shortHash(linkKey(link));
+		const file = path.join(album.path, `${COVER_PREFIX}${key}${coverExt(link)}`);
+		if (album.coverPath === file && await exists(file)) {
+			return;
+		}
+		try {
+			const opts = {signal, localRoot: this.paths.media};
+			if (headers) {
+				opts.headers = headers;
+			}
+			await this.download(link, file, opts);
+			if (!await probe(file)) {
+				throw new Error('it is no picture');
+			}
+		} catch (e) {
+			if (signal.aborted) {
+				throw signal.reason;
+			}
+			await removeFile(this.paths, file).catch(() => {});
+			log.warn(`the cover of album ${album.name}: ${e.message}`);
+			return;
+		}
+		const before = album.coverPath;
+		await this.db.merge([{_id: album._id, coverPath: file}]);
+		album.coverPath = file;
+		if (isLink(before) && before !== file && path.dirname(before) === album.path) {
+			await removeFile(this.paths, before).catch(() => {});
+		}
 	}
 
 	async addAlbum(account, r) {
@@ -650,7 +709,7 @@ class SyncEngine {
 		let removed = 0;
 		for (const name of names) {
 			const file = path.join(album.path, name);
-			if (kept.has(file)) {
+			if (kept.has(file) || name.startsWith(COVER_PREFIX)) {
 				continue;
 			}
 			const st = await fsp.lstat(file).catch(() => null);
@@ -665,6 +724,28 @@ class SyncEngine {
 }
 
 const isLink = v => typeof v === 'string' && v !== '';
+
+// An album's cover in its directory: the sweep, which is for the photos' files, leaves it
+const COVER_PREFIX = '.cover-';
+const COVER_CONCURRENCY = 4;
+
+// What tells one cover from another: the link without its query, where tokens change
+function linkKey(link) {
+	try {
+		const u = new URL(link);
+		return u.origin + u.pathname;
+	} catch (e) {
+		return link;
+	}
+}
+
+function coverExt(link) {
+	try {
+		return safeExt(path.extname(new URL(link).pathname)) || '.jpg';
+	} catch (e) {
+		return '.jpg';
+	}
+}
 
 // A call that will not work however often it is tried: the connector has no such method (one
 // from before getPhoto), or its ACG does not let it be called
@@ -686,7 +767,7 @@ function parentAidOf(r) {
 const DOWNLOAD_HEADERS = ['cookie', 'authorization'];
 const MAX_HEADER_LENGTH = 8192;
 
-function downloadHeaders(given) {
+function downloadHeaders(given, method = 'listPhotos') {
 	if (!given || typeof given !== 'object' || Array.isArray(given)) {
 		return null;
 	}
@@ -694,7 +775,7 @@ function downloadHeaders(given) {
 	for (const [name, value] of Object.entries(given)) {
 		if (!DOWNLOAD_HEADERS.includes(name.toLowerCase()) || typeof value !== 'string' ||
 				!value || value.length > MAX_HEADER_LENGTH || /[\r\n\0]/.test(value)) {
-			log.warn(`listPhotos asked for a download header that is not taken: ${name}`);
+			log.warn(`${method} asked for a download header that is not taken: ${name}`);
 			return null;
 		}
 		out[name] = value;
