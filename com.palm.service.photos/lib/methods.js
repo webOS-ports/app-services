@@ -30,7 +30,7 @@ function methods(svc) {
 		if (!p || !p._id) {
 			return {returnValue: false, msg: 'The photo entry (_id) is needed'};
 		}
-		svc.background(svc.cache.screenNail(p._id), `screen nail of ${p._id}`);
+		svc.background(svc.bigView(p._id), `screen nail of ${p._id}`);
 		return {returnValue: true, msg: 'Queuing request'};
 	};
 	const getComments = p => svc.getComments(p);
@@ -61,6 +61,20 @@ function methods(svc) {
 			} catch (e) {
 				return {returnValue: false, error: e.message};
 			}
+		},
+
+		syncAlbum: async p => {
+			if (!p || !p.albumId) {
+				return {returnValue: false, msg: 'The album (albumId) is needed'};
+			}
+			const r = await svc.syncAlbum(p.albumId);
+			return Object.assign({returnValue: true}, r);
+		},
+		fetchOriginal: async p => {
+			if (!p || !p._id) {
+				return {returnValue: false, msg: 'The photo entry (_id) is needed'};
+			}
+			return {returnValue: true, path: await svc.fetchOriginal(p._id)};
 		},
 
 		onEnabled: p => svc.onEnabled(p || {}),

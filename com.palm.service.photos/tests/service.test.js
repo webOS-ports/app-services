@@ -73,7 +73,24 @@ function setup(t, {albums, photos} = {}) {
 	const download = fakeDownload(files);
 	const svc = new PhotosService({bus, paths, thumbnailer: thumbs, download});
 	t.after(() => svc.stop());
-	return {root, bus, cloud, files, paths, thumbs, download, svc, api: methods(svc)};
+	const api = methods(svc);
+	// A sync, and every album it brought opened, as the app opens one: everything comes down
+	// (the previews, where there are any), as a sync brought everything before albums were
+	// listed only once opened. Answers as syncSingleAccount does.
+	const sync = async () => {
+		let r = await api.syncSingleAccount({accountId: 'acct1'});
+		for (const a of bus.db.live('com.palm.media.image.album:1').filter(x => x.accountId === 'acct1' && x.listed !== true)) {
+			try {
+				await api.syncAlbum({albumId: a._id});
+			} catch (e) {
+				if (r.returnValue) {
+					r = {returnValue: false, error: e.message};
+				}
+			}
+		}
+		return r;
+	};
+	return {root, bus, cloud, files, paths, thumbs, download, svc, api, sync};
 }
 
 const photosOf = (bus, accountId) =>
@@ -82,11 +99,11 @@ const albumsOf = (bus, accountId) =>
 	bus.db.live('com.palm.media.image.album:1').filter(a => a.accountId === accountId);
 
 test('first sync: albums, photos, thumbnails; no link token is kept', async t => {
-	const {bus, svc, api, paths, thumbs} = setup(t);
+	const {bus, svc, api, paths, thumbs, sync} = setup(t);
 	await svc.start();
 	assert.deepEqual((await api.getAccountsCapability()).AccountsCapability[TPL].serviceName, SVC);
 
-	assert.deepEqual(await api.syncSingleAccount({accountId: 'acct1'}), {returnValue: true});
+	assert.deepEqual(await sync(), {returnValue: true});
 	const albums = albumsOf(bus, 'acct1');
 	assert.deepEqual(albums.map(a => a.name).sort(), ['Camera Uploads', 'Trips']);
 	for (const a of albums) {
@@ -116,9 +133,9 @@ test('first sync: albums, photos, thumbnails; no link token is kept', async t =>
 });
 
 test('resync: what the cloud dropped goes here only; renames and captions follow', async t => {
-	const {bus, svc, api, cloud} = setup(t);
+	const {bus, svc, api, cloud, sync} = setup(t);
 	await svc.start();
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	const before = photosOf(bus, 'acct1');
 	const gone = before.find(p => p[TPL].pid === 'id:2');
 	const trips = albumsOf(bus, 'acct1').find(a => a.name === 'Trips');
@@ -144,31 +161,31 @@ test('resync: what the cloud dropped goes here only; renames and captions follow
 });
 
 test('an empty placeholder album that becomes a real folder, and back, stays the same album', async t => {
-	const {bus, svc, api, cloud} = setup(t, {
+	const {bus, svc, cloud, sync} = setup(t, {
 		albums: [{aid: '', name: 'Camera Uploads', size: {images: 0, videos: 0}}, {aid: '', name: 'Ignored twin'}],
 		photos: {}
 	});
 	await svc.start();
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	const [placeholder] = albumsOf(bus, 'acct1');
 	assert.equal(placeholder.aid, '');
 
 	cloud.albums = [{aid: 'WnJz2ZjA', name: 'Camera Uploads', size: {images: 1, videos: 0}}];
 	cloud.photos.WnJz2ZjA = [{pid: 'id:1', src_big: 'https://dl.example/t/AAA?token=s3cret', type: 'image', fileName: 'one.jpg'}];
-	assert.equal((await api.syncSingleAccount({accountId: 'acct1'})).returnValue, true);
+	assert.equal((await sync()).returnValue, true);
 	let albums = albumsOf(bus, 'acct1');
 	assert.deepEqual(albums.map(a => [a._id, a.aid]), [[placeholder._id, 'WnJz2ZjA']], 'same entry, new aid');
 	assert.deepEqual(photosOf(bus, 'acct1').map(p => [p.albumId, p[TPL].pid]), [[placeholder._id, 'id:1']]);
 
 	cloud.albums = [{aid: '', name: 'Camera Uploads', size: {images: 0, videos: 0}}];
-	assert.equal((await api.syncSingleAccount({accountId: 'acct1'})).returnValue, true);
+	assert.equal((await sync()).returnValue, true);
 	albums = albumsOf(bus, 'acct1');
 	assert.deepEqual(albums.map(a => [a._id, a.aid]), [[placeholder._id, '']], 'and back');
 	assert.equal(photosOf(bus, 'acct1').length, 0);
 
 	// Another name is another album: the placeholder goes, the folder is new
 	cloud.albums = [{aid: '/Trips', name: 'Trips', size: {images: 0, videos: 0}}];
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	albums = albumsOf(bus, 'acct1');
 	assert.equal(albums.length, 1);
 	assert.notEqual(albums[0]._id, placeholder._id);
@@ -176,28 +193,28 @@ test('an empty placeholder album that becomes a real folder, and back, stays the
 	// Two real folders of one name are two albums, even when one replaces the other
 	const trips = albums[0];
 	cloud.albums = [{aid: '/Old/Trips', name: 'Trips', size: {images: 0, videos: 0}}];
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	albums = albumsOf(bus, 'acct1');
 	assert.deepEqual(albums.map(a => a.aid), ['/Old/Trips']);
 	assert.notEqual(albums[0]._id, trips._id);
 });
 
 test('a failing download fails the sync but keeps the rest', async t => {
-	const {bus, svc, api, files} = setup(t);
+	const {bus, svc, files, sync} = setup(t);
 	files.delete('https://dl.example/t/BBB?token=s3cret');
 	await svc.start();
-	const r = await api.syncSingleAccount({accountId: 'acct1'});
+	const r = await sync();
 	assert.equal(r.returnValue, false);
 	assert.match(r.error, /404/);
 	assert.deepEqual(photosOf(bus, 'acct1').map(p => p[TPL].pid).sort(), ['id:1', 'id:3']);
 	assert.equal(svc.accounts.view('acct1').syncStatus, 'idle');
 	files.set('https://dl.example/t/BBB?token=s3cret', png(10, 10));
-	assert.equal((await api.syncSingleAccount({accountId: 'acct1'})).returnValue, true);
+	assert.equal((await sync()).returnValue, true);
 	assert.equal(photosOf(bus, 'acct1').length, 3, 'picked up next time');
 });
 
 test('listPhotos is told what the service has; a temporary copy is fetched to be removed', async t => {
-	const {bus, svc, api, cloud, download} = setup(t);
+	const {bus, svc, cloud, download, sync} = setup(t);
 	const asked = [];
 	const listPhotos = bus.providers[SVC].listPhotos;
 	bus.providers[SVC].listPhotos = p => {
@@ -206,7 +223,7 @@ test('listPhotos is told what the service has; a temporary copy is fetched to be
 	};
 	cloud.photos['/Trips'][0].temporary = true;
 	await svc.start();
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	assert.deepEqual(asked.map(p => [p.aid, p.have]), [['/Camera Uploads', []], ['/Trips', []]], 'new albums: nothing yet');
 	assert.deepEqual(download.fetched.map(f => [f.url, f.removeSource]).sort(), [
 		['https://dl.example/t/AAA?token=s3cret', false],
@@ -215,35 +232,35 @@ test('listPhotos is told what the service has; a temporary copy is fetched to be
 	]);
 
 	asked.length = 0;
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	assert.deepEqual(asked.map(p => [p.aid, [...p.have].sort()]), [['/Camera Uploads', ['id:1', 'id:2']], ['/Trips', ['id:3']]]);
 	assert.equal(photosOf(bus, 'acct1').length, 3);
 });
 
 test('a download may copy local files from the media root only', async t => {
-	const {svc, api, paths, download} = setup(t);
+	const {svc, paths, download, sync} = setup(t);
 	await svc.start();
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	assert.ok(download.fetched.length);
 	assert.ok(download.fetched.every(f => f.localRoot === paths.media));
 });
 
 test('something that is no image is kept but never shown, and not fetched again', async t => {
-	const {bus, svc, api, files, download} = setup(t);
+	const {bus, svc, files, download, sync} = setup(t);
 	files.set('https://dl.example/t/CCC?token=s3cret', Buffer.from('<html>login page</html>'));
 	await svc.start();
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	const rome = photosOf(bus, 'acct1').find(p => p[TPL].pid === 'id:3');
 	assert.equal(rome.appCacheComplete, false);
 	const fetched = download.fetched.length;
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	assert.equal(download.fetched.length, fetched);
 });
 
 test('deleting a cloud photo deletes it in the cloud first', async t => {
-	const {bus, svc, api, cloud} = setup(t);
+	const {bus, svc, api, cloud, sync} = setup(t);
 	await svc.start();
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	const one = photosOf(bus, 'acct1').find(p => p[TPL].pid === 'id:1');
 
 	cloud.failDelete = true;
@@ -262,9 +279,9 @@ test('deleting a cloud photo deletes it in the cloud first', async t => {
 });
 
 test('deletePhotos with exclude: all of the album but the listed ones', async t => {
-	const {bus, svc, api, cloud} = setup(t);
+	const {bus, svc, api, cloud, sync} = setup(t);
 	await svc.start();
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	const cam = albumsOf(bus, 'acct1').find(a => a.name === 'Camera Uploads');
 	const keep = photosOf(bus, 'acct1').find(p => p[TPL].pid === 'id:1');
 	await api.deletePhotos({specs: [{sourceAlbum: cam._id, exclude: true, photos: [keep._id]}]});
@@ -273,9 +290,9 @@ test('deletePhotos with exclude: all of the album but the listed ones', async t 
 });
 
 test('removing the account clears what was synced, and nothing in the cloud', async t => {
-	const {bus, svc, api, cloud, paths} = setup(t);
+	const {bus, svc, api, cloud, paths, sync} = setup(t);
 	await svc.start();
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	const dir = paths.accountDir(TPL, 'me@example.org');
 	assert.ok(fs.existsSync(dir));
 
@@ -290,9 +307,9 @@ test('removing the account clears what was synced, and nothing in the cloud', as
 });
 
 test('leftovers of an interrupted removal go before the next sync', async t => {
-	const {bus, svc, api} = setup(t);
+	const {bus, svc, api, sync} = setup(t);
 	await svc.start();
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	// What a removal that died after marking the albums leaves
 	bus.db.handle('merge', {query: {from: 'com.palm.media.image.album:1',
 		where: [{prop: 'accountId', op: '=', val: 'acct1'}]}, props: {toBeDeleted: true}});
@@ -304,15 +321,15 @@ test('leftovers of an interrupted removal go before the next sync', async t => {
 });
 
 test('turning the photos off hides the albums and stops syncing; on shows them', async t => {
-	const {bus, svc, api} = setup(t);
+	const {bus, svc, api, sync} = setup(t);
 	await svc.start();
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	assert.deepEqual(await api.onEnabled({accountId: 'acct1', enabled: false}), {returnValue: true});
 	assert.ok(albumsOf(bus, 'acct1').every(a => a.showAlbum === false));
 	assert.equal(svc.accounts.view('acct1').isEnabled, false);
 	const listed = bus.callsTo(SVC, 'listAlbums').length;
 	await api.remoteSyncAlbums({});
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	assert.equal(bus.callsTo(SVC, 'listAlbums').length, listed, 'a disabled account is not synced');
 
 	assert.deepEqual(await api.onEnabled({accountId: 'acct1', enabled: true}), {returnValue: true});
@@ -398,9 +415,9 @@ test('albums: create, rename, delete on the device', async t => {
 });
 
 test('copies: to a device album as a file, to a cloud album as an upload', async t => {
-	const {bus, svc, api, root, cloud} = setup(t);
+	const {bus, svc, api, root, cloud, sync} = setup(t);
 	await svc.start();
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	const made = await api.createAlbum({name: 'Keep', accountId: 'local'});
 	const src = path.join(root.media, 'DCIM');
 	fs.mkdirSync(src);
@@ -425,7 +442,7 @@ test('copies: to a device album as a file, to a cloud album as an upload', async
 	assert.equal(albumsOf(bus, 'acct1').find(a => a._id === cam._id).total.images, 3, 'counted again');
 	cloud.photos['/Camera Uploads'].push({pid: 'id:up1', src_big: 'https://dl.example/none', type: 'image'});
 	cloud.albums[0].size = {images: 3, videos: 0};
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	assert.equal(photosOf(bus, 'acct1').filter(p => p[TPL].pid === 'id:up1').length, 1);
 	assert.equal(albumsOf(bus, 'acct1').find(a => a._id === cam._id).total.images, 3);
 });
@@ -478,9 +495,9 @@ test('subscribeToAccountsInfo answers: the list, then one account at a time', as
 });
 
 test('comments only where the account has them', async t => {
-	const {bus, svc, api} = setup(t);
+	const {bus, svc, api, sync} = setup(t);
 	await svc.start();
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	const p = photosOf(bus, 'acct1')[0];
 	assert.equal((await api.facebookGetPhotoComments({_id: p._id})).returnValue, false);
 	const fb = bus.db.handle('put', {objects: [{_kind: 'com.palm.media.image.file:1', accountId: 'fb1',
@@ -495,9 +512,9 @@ test('comments only where the account has them', async t => {
 });
 
 test('an account removal that fails part way is finished later', async t => {
-	const {bus, svc, api, paths} = setup(t);
+	const {bus, svc, api, paths, sync} = setup(t);
 	await svc.start();
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	const stuck = photosOf(bus, 'acct1')[0];
 	bus.db.failDel = ids => ids.includes(stuck._id);
 	assert.deepEqual(await api.onDelete({accountId: 'acct1'}), {returnValue: true});
@@ -515,9 +532,9 @@ test('an account removal that fails part way is finished later', async t => {
 });
 
 test('cleanupCache: the files of entries that are gone, nothing else', async t => {
-	const {bus, svc, api, paths} = setup(t);
+	const {bus, svc, api, paths, sync} = setup(t);
 	await svc.start();
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	const [gone, kept] = photosOf(bus, 'acct1');
 	await svc.cache.screenNail(kept._id);
 	const keptNail = bus.db.objects.get(kept._id).appScreenNail.path;
@@ -542,9 +559,9 @@ test('cleanupCache: the files of entries that are gone, nothing else', async t =
 });
 
 test('files whose entries were lost are taken over, and leftovers swept', async t => {
-	const {bus, svc, api, download} = setup(t);
+	const {bus, svc, download, sync} = setup(t);
 	await svc.start();
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	const before = photosOf(bus, 'acct1');
 	const cam = albumsOf(bus, 'acct1').find(a => a.name === 'Camera Uploads');
 	// The entries gone, as the media indexer at start removed them; the files stay
@@ -552,7 +569,7 @@ test('files whose entries were lost are taken over, and leftovers swept', async 
 	fs.writeFileSync(path.join(cam.path, 'stray.jpg'), 'x');
 	fs.writeFileSync(path.join(cam.path, 'busy.jpg.part'), 'x');
 	const fetched = download.fetched.length;
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	const after = photosOf(bus, 'acct1');
 	assert.equal(download.fetched.length - fetched, 3, 'downloaded again');
 	assert.deepEqual(after.map(p => p.path).sort(), before.map(p => p.path).sort(), 'into the same files');
@@ -560,7 +577,7 @@ test('files whose entries were lost are taken over, and leftovers swept', async 
 });
 
 test('sub-albums: each entry has its parent\'s _id, and follows it when it moves', async t => {
-	const {bus, svc, api, cloud} = setup(t, {
+	const {bus, svc, cloud, sync} = setup(t, {
 		albums: [
 			{aid: 'Trips/Italy/Rome', name: 'Rome', parentAid: 'Trips/Italy', size: {images: 1}},
 			{aid: 'Trips/Italy', name: 'Italy', parentAid: 'Trips', size: {images: 1}},
@@ -575,7 +592,7 @@ test('sub-albums: each entry has its parent\'s _id, and follows it when it moves
 		}
 	});
 	await svc.start();
-	assert.equal((await api.syncSingleAccount({accountId: 'acct1'})).returnValue, true);
+	assert.equal((await sync()).returnValue, true);
 	const byAid = () => new Map(albumsOf(bus, 'acct1').map(a => [a.aid, a]));
 	let albums = byAid();
 	assert.equal(albums.get('Trips/Italy/Rome').parentId, albums.get('Trips/Italy')._id, 'a parent listed after its child');
@@ -594,7 +611,7 @@ test('sub-albums: each entry has its parent\'s _id, and follows it when it moves
 		{aid: 'B', name: 'B', parentAid: 'A', size: {images: 0}},
 		{aid: 'C', name: 'C', parentAid: 'A', size: {images: 0}}
 	];
-	assert.equal((await api.syncSingleAccount({accountId: 'acct1'})).returnValue, true);
+	assert.equal((await sync()).returnValue, true);
 	albums = byAid();
 	assert.equal(albums.get('Trips/Italy/Rome').parentId, '');
 	assert.equal(albums.get('Trips/Italy/Rome').parentAid, '');
@@ -605,15 +622,257 @@ test('sub-albums: each entry has its parent\'s _id, and follows it when it moves
 });
 
 test('download headers a listing hands over go with its downloads, and are kept nowhere', async t => {
-	const {bus, svc, api, download} = setup(t);
+	const {bus, svc, download, sync} = setup(t);
 	const listPhotos = bus.providers[SVC].listPhotos;
 	bus.providers[SVC].listPhotos = p => Object.assign(listPhotos(p),
 		p.aid === '/Trips' ? {headers: {Cookie: 'session=s3cret'}} : {headers: {Cookie: 'x', Host: 'evil'}});
 	await svc.start();
-	await api.syncSingleAccount({accountId: 'acct1'});
+	await sync();
 	const sent = new Map(download.fetched.map(f => [f.url, f.headers]));
 	assert.deepEqual(sent.get('https://dl.example/t/CCC?token=s3cret'), {Cookie: 'session=s3cret'});
 	assert.equal(sent.get('https://dl.example/t/AAA?token=s3cret'), undefined, 'headers it may not ask for: none');
 	assert.ok(!JSON.stringify(bus.db.live('com.palm.media.types:1')).includes('session=s3cret'));
 	assert.ok(!JSON.stringify(bus.db.live('com.palm.media.image.album:1')).includes('session=s3cret'));
+});
+
+test('a sync brings the albums only; an opened album its photos, then every sync', async t => {
+	const {bus, svc, api, cloud, download} = setup(t);
+	await svc.start();
+	assert.deepEqual(await api.syncSingleAccount({accountId: 'acct1'}), {returnValue: true});
+	const albums = albumsOf(bus, 'acct1');
+	assert.deepEqual(albums.map(a => a.name).sort(), ['Camera Uploads', 'Trips']);
+	assert.ok(albums.every(a => a.listed === false));
+	assert.equal(photosOf(bus, 'acct1').length, 0);
+	assert.equal(bus.callsTo(SVC, 'listPhotos').length, 0, 'no album listed');
+	assert.equal(download.fetched.length, 0);
+
+	const cam = albums.find(a => a.name === 'Camera Uploads');
+	const r = await api.syncAlbum({albumId: cam._id});
+	assert.deepEqual(r, {returnValue: true, photos: 2});
+	assert.equal(albumsOf(bus, 'acct1').find(a => a._id === cam._id).listed, true);
+	assert.deepEqual(bus.callsTo(SVC, 'listPhotos').map(c => c.params.aid), ['/Camera Uploads']);
+	assert.ok(photosOf(bus, 'acct1').every(p => p.appCacheComplete === true), 'thumbnails made before it answers');
+	assert.equal(svc.accounts.view('acct1').syncStatus, 'idle');
+
+	cloud.photos['/Camera Uploads'].push({pid: 'id:4', src_big: 'https://dl.example/t/CCC?token=s3cret', type: 'image', fileName: 'new.jpg'});
+	cloud.photos['/Trips'].push({pid: 'id:5', src_big: 'https://dl.example/t/CCC?token=s3cret', type: 'image', fileName: 'x.jpg'});
+	await api.syncSingleAccount({accountId: 'acct1'});
+	assert.deepEqual(photosOf(bus, 'acct1').map(p => p[TPL].pid).sort(), ['id:1', 'id:2', 'id:4'], 'the opened album kept up to date');
+	assert.deepEqual(bus.callsTo(SVC, 'listPhotos').map(c => c.params.aid), ['/Camera Uploads', '/Camera Uploads']);
+
+	assert.equal((await api.syncAlbum({})).returnValue, false);
+	await assert.rejects(api.syncAlbum({albumId: 'nope'}), /no cloud album/);
+	await api.createAlbum({name: 'Mine', accountId: 'local'});
+	const local = bus.db.live('com.palm.media.image.album:1').find(x => x.name === 'Mine');
+	await assert.rejects(api.syncAlbum({albumId: local._id}), /no cloud album/);
+});
+
+test('albums synced before they were listed only when opened: listed when they have photos', async t => {
+	const {bus, svc, api, cloud, sync} = setup(t);
+	await svc.start();
+	await sync();
+	// As an older service left them: no "listed"; Trips with no photos here
+	const albums = albumsOf(bus, 'acct1');
+	for (const a of albums) {
+		delete bus.db.objects.get(a._id).listed;
+	}
+	const trips = albums.find(a => a.name === 'Trips');
+	for (const p of photosOf(bus, 'acct1').filter(x => x.albumId === trips._id)) {
+		bus.db.handle('del', {ids: [p._id]});
+	}
+	cloud.photos['/Camera Uploads'].push({pid: 'id:4', src_big: 'https://dl.example/t/CCC?token=s3cret', type: 'image', fileName: 'new.jpg'});
+	await api.syncSingleAccount({accountId: 'acct1'});
+	const after = albumsOf(bus, 'acct1');
+	assert.equal(after.find(a => a.name === 'Camera Uploads').listed, true);
+	assert.equal(after.find(a => a.name === 'Trips').listed, false);
+	assert.deepEqual(photosOf(bus, 'acct1').map(p => p[TPL].pid).sort(), ['id:1', 'id:2', 'id:4']);
+});
+
+// A gallery whose photos have a preview of their own (PiGallery2, Immich, PhotoPrism)
+function withPreviews(t, {getPhoto} = {}) {
+	const ctx = setup(t, {
+		albums: [{aid: 'Holidays', name: 'Holidays', size: {images: 2}}],
+		photos: {Holidays: [
+			{pid: 'Holidays/a.jpg', src_big: 'https://g.example/a.jpg', src_small: 'https://g.example/a.jpg/320', type: 'image', fileName: 'a.jpg'},
+			{pid: 'Holidays/b.jpg', src_big: 'https://g.example/b.jpg', src_small: 'https://g.example/b.jpg/320', type: 'image', fileName: 'b.jpg'}
+		]}
+	});
+	ctx.files.set('https://g.example/a.jpg/320', jpeg(320, 240));
+	ctx.files.set('https://g.example/b.jpg/320', jpeg(320, 240));
+	ctx.files.set('https://g.example/a.jpg', jpeg(4000, 3000));
+	ctx.files.set('https://g.example/b.jpg', png(4000, 3000));
+	const provider = ctx.bus.providers[SVC];
+	provider.listPhotos = p => ({returnValue: true, photos: ctx.cloud.photos[p.aid] || [], headers: {Cookie: 's=1'}});
+	if (getPhoto) {
+		provider.getPhoto = getPhoto;
+	}
+	return ctx;
+}
+
+test('previews: only src_small comes down; the whole picture when the photo is opened', async t => {
+	const {bus, svc, api, paths, thumbs, download, sync} = withPreviews(t);
+	await svc.start();
+	await sync();
+	assert.deepEqual(download.fetched.map(f => f.url).sort(), ['https://g.example/a.jpg/320', 'https://g.example/b.jpg/320']);
+	const photos = photosOf(bus, 'acct1');
+	for (const p of photos) {
+		assert.equal(p.original, 'remote');
+		assert.equal(p.appOriginal, undefined, 'no original yet');
+		assert.ok(fs.existsSync(p.path) && paths.inCache(p.path));
+		assert.equal(p.appCacheComplete, true, 'the grid thumbnail from the preview');
+	}
+	const a = photos.find(p => p[TPL].pid === 'Holidays/a.jpg');
+	const preview = a.path;
+	thumbs.made.length = 0;
+
+	assert.deepEqual(await api.generateImgForBigView({_id: a._id}), {returnValue: true, msg: 'Queuing request'});
+	await svc.bigView(a._id);     // what the call queued, awaited
+	const [after] = await svc.db.get([a._id]);
+	assert.equal(after.original, 'local');
+	assert.equal(after.appOriginal, after.path);
+	assert.notEqual(after.path, preview);
+	assert.ok(!fs.existsSync(preview), 'the preview is gone');
+	assert.ok(fs.existsSync(after.path));
+	assert.ok(after.appScreenNail && after.appScreenNail.path, 'the screen copy made');
+	assert.deepEqual(thumbs.made.map(m => m.src), [after.path], 'from the whole picture, not the preview');
+	const fetched = download.fetched.find(f => f.url === 'https://g.example/a.jpg');
+	assert.deepEqual(fetched.headers, {Cookie: 's=1'}, 'the listing\'s session along');
+	// No getPhoto: the album listed again, and told it has the rest
+	const relist = bus.callsTo(SVC, 'listPhotos').pop();
+	assert.deepEqual(relist.params.have, ['Holidays/b.jpg']);
+	assert.ok(!JSON.stringify(after).includes('g.example'), 'no link kept');
+
+	// A sync later leaves it be
+	await api.syncSingleAccount({accountId: 'acct1'});
+	const [again] = await svc.db.get([a._id]);
+	assert.equal(again.path, after.path);
+	assert.ok(fs.existsSync(after.path), 'not swept');
+});
+
+test('fetchOriginal: once per photo, at once when it is here whole; a gone photo keeps its preview', async t => {
+	const {bus, svc, api, cloud, download, sync} = withPreviews(t);
+	await svc.start();
+	await sync();
+	const [a, b] = ['Holidays/a.jpg', 'Holidays/b.jpg'].map(pid => photosOf(bus, 'acct1').find(p => p[TPL].pid === pid));
+	const before = download.fetched.length;
+	const [r1, r2] = await Promise.all([api.fetchOriginal({_id: a._id}), api.fetchOriginal({_id: a._id})]);
+	assert.equal(r1.returnValue, true);
+	assert.deepEqual(r1, r2);
+	assert.equal(download.fetched.length - before, 1, 'one download for both');
+	assert.equal(path.extname(r1.path), '.jpg');
+	assert.deepEqual(await api.fetchOriginal({_id: a._id}), r1, 'here now: no download');
+	assert.equal(download.fetched.length - before, 1);
+	assert.equal((await api.fetchOriginal({})).returnValue, false);
+
+	// The cloud has it no more: an error, and the preview stays the photo's
+	cloud.photos.Holidays = cloud.photos.Holidays.filter(p => p.pid !== 'Holidays/b.jpg');
+	await assert.rejects(api.fetchOriginal({_id: b._id}), /not in Holidays any more/);
+	const [bAfter] = await svc.db.get([b._id]);
+	assert.equal(bAfter.original, 'remote');
+	assert.equal(bAfter.path, b.path);
+	assert.ok(fs.existsSync(b.path));
+	// Nor does the big view make a screen copy of the preview
+	await assert.rejects(svc.bigView(b._id));
+	await svc.cache.screenNail(b._id);
+	assert.equal((await svc.db.get([b._id]))[0].appScreenNail, undefined);
+});
+
+test('a whole picture that fails to come down leaves nothing behind', async t => {
+	const {bus, svc, api, files, sync} = withPreviews(t);
+	await svc.start();
+	await sync();
+	const a = photosOf(bus, 'acct1').find(p => p[TPL].pid === 'Holidays/a.jpg');
+	const dir = path.dirname(a.path);
+	const before = fs.readdirSync(dir).sort();
+	files.delete('https://g.example/a.jpg');
+	await assert.rejects(api.fetchOriginal({_id: a._id}), /404/);
+	assert.deepEqual(fs.readdirSync(dir).sort(), before);
+	// Down, but its entry cannot be written: the file goes again
+	files.set('https://g.example/a.jpg', jpeg(4000, 3000));
+	bus.db.failMerge = objects => objects.some(o => o.original === 'local');
+	await assert.rejects(api.fetchOriginal({_id: a._id}), /merge failed/);
+	assert.deepEqual(fs.readdirSync(dir).sort(), before);
+	const [after] = await svc.db.get([a._id]);
+	assert.equal(after.original, 'remote');
+	assert.equal(after.path, a.path);
+});
+
+test('getPhoto when the connector has it; asked no more of one that has none', async t => {
+	const asked = [];
+	const {bus, svc, api, cloud, download, sync} = withPreviews(t, {getPhoto: p => {
+		asked.push(p);
+		return {returnValue: true, src_big: `https://g.example/${p.pid.split('/').pop()}`, headers: {Cookie: 'fresh=1'}};
+	}});
+	await svc.start();
+	await sync();
+	const a = photosOf(bus, 'acct1').find(p => p[TPL].pid === 'Holidays/a.jpg');
+	const lists = bus.callsTo(SVC, 'listPhotos').length;
+	await api.fetchOriginal({_id: a._id});
+	assert.deepEqual(asked, [{accountId: 'acct1', aid: 'Holidays', pid: 'Holidays/a.jpg'}]);
+	assert.equal(bus.callsTo(SVC, 'listPhotos').length, lists, 'no listing');
+	assert.deepEqual(download.fetched.pop().headers, {Cookie: 'fresh=1'});
+
+	// One without getPhoto ("Unknown method"): listed, and getPhoto not tried again
+	delete bus.providers[SVC].getPhoto;
+	const b = photosOf(bus, 'acct1').find(p => p[TPL].pid === 'Holidays/b.jpg');
+	await api.fetchOriginal({_id: b._id});
+	assert.equal(bus.callsTo(SVC, 'listPhotos').length, lists + 1);
+	assert.equal(bus.callsTo(SVC, 'getPhoto').length, 2);
+	cloud.photos.Holidays.push({pid: 'Holidays/c.jpg', src_big: 'https://g.example/a.jpg', src_small: 'https://g.example/a.jpg/320',
+		type: 'image', fileName: 'c.jpg'});
+	await api.syncSingleAccount({accountId: 'acct1'});
+	const c = photosOf(bus, 'acct1').find(p => p.original === 'remote');
+	assert.equal(c[TPL].pid, 'Holidays/c.jpg');
+	await api.fetchOriginal({_id: c._id});
+	assert.equal(bus.callsTo(SVC, 'getPhoto').length, 2, 'not asked again');
+});
+
+test('a copy of a photo of which only the preview is here copies the whole picture', async t => {
+	const {bus, svc, api, download, sync} = withPreviews(t);
+	await svc.start();
+	await sync();
+	const a = photosOf(bus, 'acct1').find(p => p[TPL].pid === 'Holidays/a.jpg');
+	const target = await api.createAlbum({name: 'Mine', accountId: 'local'});
+	const mine = bus.db.live('com.palm.media.image.album:1').find(x => x.name === 'Mine');
+	assert.ok(target.returnValue !== false && mine);
+	const r = await api.addPhotos({targetAlbum: mine._id, specs: [{sourceAlbum: a.albumId, photos: [a._id], targetAlbum: mine._id}]});
+	assert.notEqual(r.returnValue, false);
+	assert.ok(download.fetched.some(f => f.url === 'https://g.example/a.jpg'), 'the whole picture fetched');
+	const copied = fs.readdirSync(mine.path);
+	assert.equal(copied.length, 1);
+	assert.ok(fs.readFileSync(path.join(mine.path, copied[0])).length > 4096, 'not the preview');
+});
+
+test('a photo the connector gives one link for comes down whole, as before', async t => {
+	const {bus, svc, download, sync} = setup(t, {
+		albums: [{aid: '/A', name: 'A', size: {images: 1}}],
+		photos: {'/A': [{pid: 'id:1', src_big: 'https://dl.example/t/AAA?token=s3cret', src_small: 'https://dl.example/t/AAA?token=s3cret', type: 'image', fileName: 'one.jpg'}]}
+	});
+	await svc.start();
+	await sync();
+	const [p] = photosOf(bus, 'acct1');
+	assert.equal(p.original, undefined);
+	assert.equal(p.appOriginal, p.path);
+	assert.equal(download.fetched.length, 1);
+});
+
+test('turning the photos off stops an album being listed', async t => {
+	const {bus, svc, api} = setup(t);
+	await svc.start();
+	await api.syncSingleAccount({accountId: 'acct1'});
+	const cam = albumsOf(bus, 'acct1').find(a => a.name === 'Camera Uploads');
+	let release;
+	const gate = new Promise(r => { release = r; });
+	const list = bus.providers[SVC].listPhotos;
+	bus.providers[SVC].listPhotos = async p => { await gate; return list(p); };
+	const opening = api.syncAlbum({albumId: cam._id});
+	while (!bus.callsTo(SVC, 'listPhotos').length) {
+		await new Promise(r => setImmediate(r));
+	}
+	const off = api.onEnabled({accountId: 'acct1', enabled: false});
+	release();
+	await assert.rejects(opening, /cancelled/);
+	await off;
+	assert.equal(photosOf(bus, 'acct1').length, 0);
+	assert.deepEqual(await api.syncAlbum({albumId: cam._id}), {returnValue: true, skipped: 'disabled'});
 });
