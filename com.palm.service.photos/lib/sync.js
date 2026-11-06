@@ -39,7 +39,7 @@ const LIST_ATTEMPTS = 3;
 const REMOTE = 'remote';
 
 class SyncEngine {
-	constructor({db, bus, paths, accounts, caps, library, cache, download}) {
+	constructor({db, bus, paths, accounts, caps, library, cache, download, storage}) {
 		this.db = db;
 		this.bus = bus;
 		this.paths = paths;
@@ -48,6 +48,8 @@ class SyncEngine {
 		this.library = library;
 		this.cache = cache;
 		this.download = download;
+		this.storage = storage;
+		this.enforcing = Promise.resolve();
 		this.running = new Map();      // accountId -> {promise, controller}
 		this.albums = new Map();       // album _id -> the promise of its photos' sync
 		this.originals = new Map();    // photo _id -> the promise of its full picture
@@ -143,16 +145,16 @@ class SyncEngine {
 		}
 		const acc = Object.assign({accountId: album.accountId}, account);
 		return this.accounts.track(album.accountId, 'sync', () => this.forAccount(album.accountId, async signal => {
-			if (album.listed !== true) {
-				await this.db.merge([{_id: album._id, listed: true}]);
-				album.listed = true;
-			}
+			// When it was last opened: an album not opened for EXPIRE_DAYS goes back to unopened
+			await this.db.merge([{_id: album._id, listed: true, openedTime: this.nowSeconds()}]);
+			album.listed = true;
 			if (!this.paths.inCache(album.path)) {
 				return {photos: 0};
 			}
 			await this.photosOf(acc, cap, album, false, signal);
 			signal.throwIfAborted();
 			await this.cache.run();
+			await this.budget();
 			return {photos: (await this.db.find({from: MEDIA_KIND, where: [{prop: 'albumId', op: '=', val: album._id}]})).length};
 		}));
 	}
@@ -235,6 +237,8 @@ class SyncEngine {
 			}
 		}
 		await this.linkParents(remoteAlbums, synced);
+		await this.ledgerOf(synced);
+		await this.expire(synced);
 		await this.coversOf(remoteAlbums, synced, downloadHeaders(remote.headers, 'listAlbums'), signal);
 
 		for (const {album, isNew} of synced.values()) {
@@ -255,6 +259,7 @@ class SyncEngine {
 
 		signal.throwIfAborted();
 		await this.cache.run();
+		await this.budget();
 		if (failure) {
 			throw failure;
 		}
@@ -329,6 +334,7 @@ class SyncEngine {
 			return;
 		}
 		try {
+			await this.storage.ensureRoom();
 			const opts = {signal, localRoot: this.paths.media};
 			if (headers) {
 				opts.headers = headers;
@@ -351,6 +357,169 @@ class SyncEngine {
 		if (isLink(before) && before !== file && path.dirname(before) === album.path) {
 			await removeFile(this.paths, before).catch(() => {});
 		}
+	}
+
+	nowSeconds() {
+		return Math.floor(this.storage.now() / 1000);
+	}
+
+	// The albums kept on the device ({keep: true}): their pictures count for no cap
+	async keptAlbums() {
+		const kept = new Set();
+		for (const a of this.accounts.remote()) {
+			const albums = await this.db.find({from: ALBUM_KIND, where: [{prop: 'accountId', op: '=', val: a.accountId}]});
+			for (const album of albums) {
+				if (album.keep === true) {
+					kept.add(album._id);
+				}
+			}
+		}
+		return kept;
+	}
+
+	// Back under the cap: the pictures opened longest ago dropped, never one of `spare` or one
+	// being fetched. One run at a time.
+	budget(spare = new Set()) {
+		this.enforcing = this.enforcing.then(async () => {
+			const kept = await this.keptAlbums();
+			const drop = await this.storage.over(kept, new Set([...spare, ...this.originals.keys()]));
+			for (const id of drop) {
+				await this.dropOriginal(id);
+			}
+		}).catch(e => log.warn(`keeping to the storage cap: ${e.message}`));
+		return this.enforcing;
+	}
+
+	// A photo's whole picture removed: it goes back to "remote", its grid thumbnail standing
+	// in until it is wanted again (fetchOriginal). Its screen-size copy, made from the
+	// picture, goes too.
+	async dropOriginal(id) {
+		const [entry] = await this.db.get([id]).catch(() => []);
+		if (!entry || entry._del || entry.original === REMOTE || entry.mediaType === 'video' || !this.paths.inCache(entry.path)) {
+			await this.storage.forget([id]);
+			return;
+		}
+		// Its thumbnail not made yet, or being written: it goes on a later run (after the
+		// thumbnails are made)
+		const thumb = entry.appGridThumbnail && entry.appGridThumbnail.path;
+		if (!thumb || !await exists(thumb) || this.writing.has(entry.path)) {
+			return;
+		}
+		const screen = entry.appScreenNail && entry.appScreenNail.path;
+		const change = {_id: entry._id, path: thumb, original: REMOTE, appOriginal: null};
+		if (entry.appScreenNail) {
+			change.appScreenNail = null;
+		}
+		await this.db.merge([change]);
+		await removeFile(this.paths, entry.path).catch(e => log.warn(`the picture of ${id} stays: ${e.message}`));
+		if (screen) {
+			await removeFile(this.paths, screen).catch(() => {});
+		}
+		await this.storage.forget([id]);
+	}
+
+	// The whole pictures already here when there was no ledger yet: counted from now
+	async ledgerOf(synced) {
+		await this.storage.load();
+		if (!this.storage.fresh) {
+			return;
+		}
+		this.storage.fresh = false;
+		for (const {album} of synced.values()) {
+			if (album.listed !== true) {
+				continue;
+			}
+			const photos = await this.db.find({from: MEDIA_KIND, where: [{prop: 'albumId', op: '=', val: album._id}]});
+			for (const p of photos) {
+				if (p.mediaType !== 'video' && p.original !== REMOTE && this.paths.inCache(p.path)) {
+					await this.storage.record(p._id, album._id, p.path);
+				}
+			}
+		}
+	}
+
+	// Opened albums not opened again for EXPIRE_DAYS go back to unopened, unless kept. One
+	// opened before openedTime was kept is taken as opened now.
+	async expire(synced) {
+		const now = this.nowSeconds();
+		for (const {album} of synced.values()) {
+			if (album.listed !== true || album.keep === true || this.albums.has(album._id)) {
+				continue;
+			}
+			if (!Number.isFinite(album.openedTime)) {
+				await this.db.merge([{_id: album._id, openedTime: now}]);
+				album.openedTime = now;
+			} else if (album.openedTime < now - EXPIRE_DAYS * 86400) {
+				log.info(`album ${album.name} not opened for ${EXPIRE_DAYS} days: its photos go`);
+				await this.unlist(album);
+			}
+		}
+	}
+
+	// An album back to unopened: its photos (previews, whole pictures, thumbnails) removed
+	// here, its cover left
+	async unlist(album) {
+		const photos = await this.db.find({from: MEDIA_KIND, where: [{prop: 'albumId', op: '=', val: album._id}]});
+		for (const p of photos) {
+			await this.library.removePhoto(p);
+		}
+		await this.storage.forget(photos.map(p => p._id));
+		await this.db.merge([{_id: album._id, listed: false}]);
+		album.listed = false;
+		return photos.length;
+	}
+
+	// clearDownloads: every opened cloud album not kept back to unopened
+	async clear() {
+		let albums = 0;
+		let photos = 0;
+		for (const a of this.accounts.remote()) {
+			const list = await this.db.find({from: ALBUM_KIND, where: [{prop: 'accountId', op: '=', val: a.accountId}]});
+			for (const album of list) {
+				if (album.listed === true && album.keep !== true && !this.albums.has(album._id) && this.paths.inCache(album.path)) {
+					photos += await this.unlist(album);
+					albums++;
+				}
+			}
+		}
+		return {albums, photos};
+	}
+
+	// keepAlbum {albumId, keep}: kept, the album is listed and every whole picture of it comes
+	// down, none of which counts for the cap or goes; no longer kept, they count again
+	async keepAlbum(albumId, keep) {
+		const [album] = albumId ? await this.db.get([albumId]) : [];
+		if (!album || album._del || album._kind !== ALBUM_KIND || !album.accountId || album.accountId === 'local') {
+			throw new Error(`no cloud album ${albumId}`);
+		}
+		await this.db.merge([{_id: album._id, keep: keep === true}]);
+		if (keep !== true) {
+			await this.budget();
+			return {keep: false};
+		}
+		const opened = await this.openAlbum(albumId);
+		if (opened.skipped) {
+			return Object.assign({keep: true}, opened);
+		}
+		const photos = await this.db.find({from: MEDIA_KIND, where: [{prop: 'albumId', op: '=', val: album._id}]});
+		let fetched = 0;
+		let failed = 0;
+		for (const p of photos) {
+			if (p.original !== REMOTE || p.mediaType === 'video') {
+				continue;
+			}
+			try {
+				await this.original(p._id);
+				fetched++;
+			} catch (e) {
+				if (e.code === 'NO_SPACE' || (e.name === 'AbortError')) {
+					throw e;
+				}
+				log.warn(`keeping ${album.name}: ${p._id}: ${e.message}`);
+				failed++;
+			}
+		}
+		return {keep: true, photos: photos.length, fetched, failed};
 	}
 
 	async addAlbum(account, r) {
@@ -482,6 +651,9 @@ class SyncEngine {
 				if (signal.aborted) {
 					throw signal.reason;
 				}
+				if (e.code === 'NO_SPACE') {
+					throw e;      // the rest would not come down either
+				}
 				log.warn(`photo ${pid} of ${album.name}: ${e.message}`);
 				failure = failure || e;
 			}
@@ -506,6 +678,7 @@ class SyncEngine {
 		if (!url) {
 			throw new Error('no URL to download from');
 		}
+		await this.storage.ensureRoom();
 		const file = await this.targetFor(album, p, url);
 		// A provider's temporary copy (temporary:true) is removed once it is copied
 		const opts = {signal, localRoot: this.paths.media, removeSource: p.temporary === true};
@@ -550,11 +723,17 @@ class SyncEngine {
 			entry.caption = p.caption;
 		}
 		entry[account.templateId] = nested;
+		let id;
 		try {
-			await this.db.put([entry]);
+			[id] = await this.db.put([entry]);
 		} catch (e) {
 			await removeFile(this.paths, finalPath).catch(() => {});
 			throw e;
+		}
+		// A whole picture counts against the cap; a video, which no thumbnail stands in for, not
+		if (!preview && !video && id) {
+			await this.storage.record(id, album._id, finalPath);
+			await this.budget(new Set([String(id)]));
 		}
 	}
 
@@ -602,6 +781,7 @@ class SyncEngine {
 			throw new Error(`the picture of ${id} cannot be fetched: its account or album is gone`);
 		}
 		return this.forAccount(entry.accountId, async signal => {
+			await this.storage.ensureRoom();
 			const link = await this.linkFor(Object.assign({accountId: entry.accountId}, account), cap, album, nested.pid, signal);
 			const file = await this.targetFor(album, {pid: nested.pid, fileName: link.fileName || nested.fileName}, link.url);
 			const opts = {signal, localRoot: this.paths.media, removeSource: link.temporary === true};
@@ -623,9 +803,12 @@ class SyncEngine {
 				this.writing.delete(file);
 				this.writing.delete(finalPath);
 			}
-			if (entry.path !== finalPath) {
+			// The preview it replaces; not the grid thumbnail standing in for a picture dropped
+			if (entry.path !== finalPath && path.dirname(entry.path) === album.path) {
 				await removeFile(this.paths, entry.path).catch(e => log.warn(`the preview of ${id} stays: ${e.message}`));
 			}
+			await this.storage.record(entry._id, album._id, finalPath);
+			await this.budget(new Set([String(entry._id)]));
 			return finalPath;
 		});
 	}
@@ -728,6 +911,7 @@ const isLink = v => typeof v === 'string' && v !== '';
 // An album's cover in its directory: the sweep, which is for the photos' files, leaves it
 const COVER_PREFIX = '.cover-';
 const COVER_CONCURRENCY = 4;
+const EXPIRE_DAYS = 30;
 
 // What tells one cover from another: the link without its query, where tokens change
 function linkKey(link) {
@@ -790,4 +974,4 @@ function total(size) {
 	};
 }
 
-module.exports = {SyncEngine, downloadHeaders};
+module.exports = {SyncEngine, downloadHeaders, EXPIRE_DAYS};

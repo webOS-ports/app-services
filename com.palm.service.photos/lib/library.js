@@ -43,9 +43,10 @@ function isCloud(entry) {
 }
 
 class Library {
-	constructor({db, bus, paths, accounts, caps, cache, original = null}) {
+	constructor({db, bus, paths, accounts, caps, cache, original = null, removed = null}) {
 		this.db = db;
 		this.original = original;   // _id -> the path of the photo's whole picture, fetched if need be
+		this.removed = removed;     // [_id] of photos removed here: no longer counted for the storage cap
 		this.bus = bus;
 		this.paths = paths;
 		this.accounts = accounts;
@@ -80,6 +81,9 @@ class Library {
 			}
 		}
 		await this.db.del([photo._id]);
+		if (this.removed) {
+			await this.removed([photo._id]);
+		}
 	}
 
 	// Removes an album's photos (here only), its directory and its entry.

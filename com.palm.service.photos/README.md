@@ -73,6 +73,20 @@ has one, else by listing the album again (`have` is then every other
 photo of it). A photo whose `src_small` is its `src_big`, or that has
 none, comes down whole as it is listed, as before.
 
+How much they take: the whole pictures here (those fetched when opened,
+and every photo of a connector with no preview of its own; not videos)
+are kept up to a cap, the user's setting (`setStorage`, 200 MB to start
+with) or 5% of the space there is for them, whichever is smaller. Past
+it, those opened longest ago go back to `original: "remote"`, their grid
+thumbnail standing in as `path` until they are wanted again; their
+screen-size copy goes with them. Nothing comes down while less than
+1 GB is free. An album not opened for 30 days goes back to unopened:
+its photos go, and its cover comes down. `clearDownloads` does that to
+every opened album at once. Albums kept on the device (`keepAlbum`) are
+left out of all of it. The photo entries cannot be searched by when a
+photo was opened, so that, and the setting, are in
+`.photosApp/.storage.json`.
+
 `src_big` is downloaded with Node's own `fetch` (https). `fileName`, when
 given, names the file; otherwise the last part of the URL does, and the
 extension is set from what the file turns out to be. The links themselves
@@ -118,6 +132,10 @@ calls those:
 | `syncSingleAccount` | `{accountId}` |
 | `syncAlbum` | `{albumId}`: the album's photos listed and their previews brought down, now and with every sync after; answers `{photos}` once the thumbnails are made |
 | `fetchOriginal` | `{_id}`: the photo's whole picture on the device; answers its `path` |
+| `keepAlbum` | `{albumId, keep}`: `keep: true` lists the album and brings every whole picture of it down, none of which counts for the cap or goes; answers `{photos, fetched, failed}` when they are down. `keep: false` counts them again |
+| `getStorage` | `{capBytes, capChoices, capNowBytes, floorBytes, freeBytes, expireDays, originals: {count, bytes}, kept: {albums, count, bytes}, otherBytes}`: the whole pictures counted for the cap, those of kept albums, and the rest of `.photosApp` (previews, covers, thumbnails) |
+| `setStorage` | `{capBytes}`, one of `capChoices`: answers as `getStorage`, after dropping what is now past it |
+| `clearDownloads` | every opened cloud album not kept back to unopened; answers `{cleared: {albums, photos}}` and what `getStorage` does |
 | `onEnabled`, `onCredentialsChanged`, `onDelete`, `facebookClearCache` | the account capability hooks (`onDelete` removes what was synced) |
 | `generateThumbnails`, `cacheThumbnails` | thumbnails for every entry waiting for one |
 | `generateImgForBigView`, `facebookGenerateImgForBigView` | `{_id}`: the screen-size copy (`appScreenNail`) |
