@@ -76,7 +76,8 @@ none, comes down whole as it is listed, as before.
 How much they take: the whole pictures here (those fetched when opened,
 and every photo of a connector with no preview of its own; not videos)
 are kept up to a cap, the user's setting (`setStorage`, 200 MB to start
-with) or 5% of the space there is for them, whichever is smaller. Past
+with): 100, 200 or 500 MB, or 1 GB doubling up to 256 GB, of which
+`getStorage` offers those that fit in the space there is for them. Past
 it, those opened longest ago go back to `original: "remote"`, their grid
 thumbnail standing in as `path` until they are wanted again; their
 screen-size copy goes with them. Nothing comes down while less than

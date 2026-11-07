@@ -7,10 +7,10 @@
 //
 // The whole pictures that come down (an opened photo's, or every photo of a connector that
 // has no preview of its own) are kept up to a cap: the user's setting (capBytes, 200 MB
-// unless changed), or 5% of the space there is for them, whichever is smaller. Past it,
-// those opened longest ago go back to their preview (the sync engine drops them). Nothing
-// comes down while less than FLOOR_BYTES is free. The pictures of albums kept on the device
-// count for neither.
+// unless changed), one of CAP_CHOICES; of those, the ones offered are those that fit in the
+// space there is for them (choices). Past the cap, those opened longest ago go back to their
+// preview (the sync engine drops them). Nothing comes down while less than FLOOR_BYTES is
+// free. The pictures of albums kept on the device count for neither.
 //
 // The photo entries are the media indexer's kind, which cannot be searched by when a photo
 // was opened, so that is kept here, in .photosApp/.storage.json, with the settings:
@@ -22,9 +22,10 @@ const log = require('./log');
 
 const MB = 1024 * 1024;
 const DEFAULT_CAP_BYTES = 200 * MB;
-const CAP_CHOICES = [100 * MB, 200 * MB, 500 * MB, 1024 * MB, 2048 * MB];
-const SHARE_OF_FREE = 0.05;
-const FLOOR_BYTES = 1024 * MB;
+const GB = 1024 * MB;
+// 100, 200 and 500 MB, then doubling from 1 GB to 256 GB
+const CAP_CHOICES = [100 * MB, 200 * MB, 500 * MB, ...Array.from({length: 9}, (_, i) => GB * 2 ** i)];
+const FLOOR_BYTES = GB;
 const FREE_CACHE_MS = 5000;
 
 class NoSpaceError extends Error {
@@ -164,10 +165,17 @@ class Storage {
 		return out;
 	}
 
-	// The cap as it is now: the setting, or the share of the space there is for them
-	async cap(kept) {
-		const used = this.usage(kept).originals.bytes;
-		return Math.min(this.settings.capBytes, Math.floor((await this.free() + used) * SHARE_OF_FREE));
+	// The cap: the setting (the floor stops what comes down before the disk fills)
+	async cap() {
+		return this.settings.capBytes;
+	}
+
+	// The sizes to offer: those that fit in the space there is for the pictures (what is
+	// free and what they take now, less the floor kept free); the smallest whatever there is,
+	// and the one set, so that it can be shown
+	async choices(kept) {
+		const room = await this.free() + this.usage(kept).originals.bytes - FLOOR_BYTES;
+		return CAP_CHOICES.filter((b, i) => i === 0 || b <= room || b === this.settings.capBytes);
 	}
 
 	// Ids of the pictures to drop, those opened longest ago first, to be back under the cap;
@@ -216,4 +224,4 @@ async function sizeOf(dir) {
 	return total;
 }
 
-module.exports = {Storage, NoSpaceError, sizeOf, DEFAULT_CAP_BYTES, CAP_CHOICES, FLOOR_BYTES, SHARE_OF_FREE};
+module.exports = {Storage, NoSpaceError, sizeOf, DEFAULT_CAP_BYTES, CAP_CHOICES, FLOOR_BYTES};
