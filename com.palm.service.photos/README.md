@@ -73,6 +73,13 @@ has one, else by listing the album again (`have` is then every other
 photo of it). A photo whose `src_small` is its `src_big`, or that has
 none, comes down whole as it is listed, as before.
 
+Every image entry has `width` and `height`, as shown (EXIF orientations
+5 to 8 swap them), as the media indexer gives the device's own photos:
+read from the file that came down, so of a preview its size, which has
+the picture's shape, until the whole picture replaces it. Entries
+written before they had them get them from their files at the album's
+next sync.
+
 How much they take: the whole pictures here (those fetched when opened,
 and every photo of a connector with no preview of its own; not videos)
 are kept up to a cap, the user's setting (`setStorage`, 200 MB to start

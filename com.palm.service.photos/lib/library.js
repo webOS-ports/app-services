@@ -12,6 +12,7 @@ const fsp = require('fs').promises;
 const path = require('path');
 const log = require('./log');
 const {callProvider} = require('./providers');
+const {probe, displaySize} = require('./imageinfo');
 const {albumDirName, copyInto, exists, mkdirs, nowSeconds, removeDir, removeFile, segment} = require('./files');
 
 const ALBUM_KIND = 'com.palm.media.image.album:1';
@@ -401,6 +402,10 @@ class Library {
 			path: dst,
 			appOriginal: dst
 		};
+		const info = video ? null : await probe(dst);
+		if (info) {
+			Object.assign(entry, displaySize(info));
+		}
 		entry[album.type] = {pid: r.pid};
 		try {
 			await this.db.put([entry]);
