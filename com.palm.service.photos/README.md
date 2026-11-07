@@ -81,7 +81,8 @@ with): 100, 200 or 500 MB, or 1 GB doubling up to 256 GB, of which
 it, those opened longest ago go back to `original: "remote"`, their grid
 thumbnail standing in as `path` until they are wanted again; their
 screen-size copy goes with them. Nothing comes down while less than
-1 GB is free. An album not opened for 30 days goes back to unopened:
+1 GB is free. An album not opened for 30 days (`setStorage {expireDays}`:
+7, 14, 30, 60 or 90, or 0 for never) goes back to unopened:
 its photos go, and its cover comes down. `clearDownloads` does that to
 every opened album at once. Albums kept on the device (`keepAlbum`) are
 left out of all of it. The photo entries cannot be searched by when a
@@ -134,8 +135,8 @@ calls those:
 | `syncAlbum` | `{albumId}`: the album's photos listed and their previews brought down, now and with every sync after; answers `{photos}` once the thumbnails are made |
 | `fetchOriginal` | `{_id}`: the photo's whole picture on the device; answers its `path` |
 | `keepAlbum` | `{albumId, keep}`: `keep: true` lists the album and brings every whole picture of it down, none of which counts for the cap or goes; answers `{photos, fetched, failed}` when they are down. `keep: false` counts them again |
-| `getStorage` | `{capBytes, capChoices, capNowBytes, floorBytes, freeBytes, expireDays, originals: {count, bytes}, kept: {albums, count, bytes}, otherBytes}`: the whole pictures counted for the cap, those of kept albums, and the rest of `.photosApp` (previews, covers, thumbnails) |
-| `setStorage` | `{capBytes}`, one of `capChoices`: answers as `getStorage`, after dropping what is now past it |
+| `getStorage` | `{capBytes, capChoices, capNowBytes, floorBytes, freeBytes, expireDays, expireChoices, originals: {count, bytes}, kept: {albums, count, bytes}, otherBytes}`: the whole pictures counted for the cap, those of kept albums, and the rest of `.photosApp` (previews, covers, thumbnails) |
+| `setStorage` | `{capBytes}`, one of `capChoices`, and/or `{expireDays}`, one of `expireChoices` (0: never): answers as `getStorage`, after dropping what is now past the cap; a shorter `expireDays` applies at the next sync |
 | `clearDownloads` | every opened cloud album not kept back to unopened; answers `{cleared: {albums, photos}}` and what `getStorage` does |
 | `onEnabled`, `onCredentialsChanged`, `onDelete`, `facebookClearCache` | the account capability hooks (`onDelete` removes what was synced) |
 | `generateThumbnails`, `cacheThumbnails` | thumbnails for every entry waiting for one |

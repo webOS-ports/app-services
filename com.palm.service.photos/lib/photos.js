@@ -15,8 +15,8 @@ const {capabilitiesFor, capabilityFor} = require('./capabilities');
 const {SerialQueue} = require('./queue');
 const {CacheGenerator, ownerOf} = require('./cache');
 const {Library, isCloud, ALBUM_KIND} = require('./library');
-const {SyncEngine, EXPIRE_DAYS} = require('./sync');
-const {Storage, sizeOf, FLOOR_BYTES} = require('./storage');
+const {SyncEngine} = require('./sync');
+const {Storage, sizeOf, FLOOR_BYTES, EXPIRE_CHOICES} = require('./storage');
 const {callProvider} = require('./providers');
 const {removeDir, removeFile} = require('./files');
 const {download: defaultDownload} = require('./download');
@@ -257,18 +257,25 @@ class PhotosService {
 			capNowBytes: await this.storage.cap(),
 			floorBytes: FLOOR_BYTES,
 			freeBytes: await this.storage.free(true),
-			expireDays: EXPIRE_DAYS,
+			expireDays: this.storage.settings.expireDays,
+			expireChoices: EXPIRE_CHOICES,
 			originals: use.originals,
 			kept: Object.assign({albums: kept.size}, use.kept),
 			otherBytes: Math.max(0, all - use.originals.bytes - use.kept.bytes)
 		};
 	}
 
-	// setStorage {capBytes}
-	async setStorage(capBytes) {
+	// setStorage {capBytes, expireDays}: either or both. A shorter expireDays applies at the
+	// next sync
+	async setStorage({capBytes, expireDays}) {
 		await this.start();
-		await this.storage.setCap(capBytes);
-		await this.syncer.budget();
+		if (expireDays !== undefined) {
+			await this.storage.setExpire(expireDays);
+		}
+		if (capBytes !== undefined) {
+			await this.storage.setCap(capBytes);
+			await this.syncer.budget();
+		}
 		return this.storageInfo();
 	}
 

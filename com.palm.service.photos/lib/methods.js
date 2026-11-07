@@ -85,10 +85,13 @@ function methods(svc) {
 		},
 		getStorage: async () => Object.assign({returnValue: true}, await svc.storageInfo()),
 		setStorage: async p => {
-			if (!p || !Number.isFinite(p.capBytes)) {
-				return {returnValue: false, msg: 'capBytes is needed'};
+			const cap = p && p.capBytes;
+			const days = p && p.expireDays;
+			if ((cap === undefined && days === undefined) || (cap !== undefined && !Number.isFinite(cap)) ||
+				(days !== undefined && !Number.isFinite(days))) {
+				return {returnValue: false, msg: 'capBytes or expireDays (numbers) is needed'};
 			}
-			return Object.assign({returnValue: true}, await svc.setStorage(p.capBytes));
+			return Object.assign({returnValue: true}, await svc.setStorage({capBytes: cap, expireDays: days}));
 		},
 		clearDownloads: async () => Object.assign({returnValue: true}, await svc.clearDownloads()),
 

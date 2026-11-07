@@ -1308,6 +1308,42 @@ test('storage: an album not opened for 30 days goes back to unopened; its cover 
 	assert.equal(other().openedTime, Math.floor(clock.t / 1000));
 });
 
+test('storage: how long an album stays opened is a setting: 7 to 90 days, or never', async t => {
+	const {bus, svc, api, sync, clock, byPid} = withBudget(t);
+	await svc.start();
+	await sync();
+	await api.fetchOriginal({_id: byPid('a')._id});
+	const holidays = () => albumsOf(bus, 'acct1').find(a => a.name === 'Holidays');
+	let info = await api.getStorage({});
+	assert.equal(info.expireDays, 30, '30 to start with');
+	assert.deepEqual(info.expireChoices, [7, 14, 30, 60, 90, 0]);
+	await assert.rejects(api.setStorage({expireDays: 10}), /expireDays: one of/);
+	assert.equal((await api.setStorage({expireDays: 'x'})).returnValue, false);
+	// Set alone, the cap stays
+	info = await api.setStorage({expireDays: 0});
+	assert.equal(info.expireDays, 0);
+	assert.equal(info.capBytes, 25000, 'the cap as it was');
+	// Never: still opened after a year
+	clock.t += 365 * 86400 * 1000;
+	await api.syncSingleAccount({accountId: 'acct1'});
+	assert.equal(holidays().listed, true, 'never: a year on, still opened');
+	// 7 days: 6 days on still opened, 8 days on not
+	await api.syncAlbum({albumId: holidays()._id});
+	await api.setStorage({expireDays: 7});
+	clock.t += 6 * 86400 * 1000;
+	await api.syncSingleAccount({accountId: 'acct1'});
+	assert.equal(holidays().listed, true, '6 days');
+	clock.t += 2 * 86400 * 1000;
+	await api.syncSingleAccount({accountId: 'acct1'});
+	assert.equal(holidays().listed, false, '8 days: unopened');
+	// Kept across a restart of the service, with the cap
+	await api.setStorage({capBytes: 500 * 1024 * 1024});
+	const again = new (require('../lib/storage').Storage)({paths: svc.paths, statfs: svc.storage.statfs});
+	await again.load();
+	assert.equal(again.settings.expireDays, 7, 'not changed by setting the cap');
+	assert.equal(again.settings.capBytes, 500 * 1024 * 1024);
+});
+
 test('storage: clearDownloads takes every opened album not kept back to unopened', async t => {
 	const {bus, svc, api, sync, cloud, files, byPid} = withBudget(t);
 	cloud.albums.push({aid: 'Other', name: 'Other', size: {images: 1}});
