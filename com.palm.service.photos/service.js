@@ -23,6 +23,7 @@ const log = require('./lib/log');
 const {PalmBus} = require('./lib/bus');
 const {Paths} = require('./lib/files');
 const {Thumbnailer} = require('./lib/thumbnailer');
+const {HeifDecoder} = require('./lib/heif');
 const {PhotosService, SERVICE} = require('./lib/photos');
 const {methods, SUBSCRIPTIONS} = require('./lib/methods');
 
@@ -37,7 +38,8 @@ function run() {
 	const service = new PhotosService({
 		bus,
 		paths,
-		thumbnailer: new Thumbnailer({tmpDir: path.join(paths.generated, '.in')})
+		thumbnailer: new Thumbnailer({tmpDir: path.join(paths.generated, '.in')}),
+		heif: new HeifDecoder({tmpDir: path.join(paths.generated, '.heif')})
 	});
 	const table = methods(service);
 	const subscriptions = new Map();     // uniqueToken -> unsubscribe

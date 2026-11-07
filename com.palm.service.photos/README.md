@@ -171,6 +171,14 @@ Differences from webOS 3.0
   not cropped.
 * Image types are read from the file header (`lib/imageinfo.js`), not
   asked of fileparserd.
+* HEIC photos (HEIF with HEVC, as iPhones take them) are kept as JPEG:
+  neither the web view nor GStreamer reads HEIC. A photo, a whole picture
+  fetched when opened, an album cover, or the copy kept of a photo copied
+  to a cloud album, that comes down or in as HEIC is turned into JPEG with
+  libheif's `heif-dec` (`lib/heif.js`), upright and with its EXIF
+  orientation set to 1, and named `.jpg`. The cloud keeps its HEIC. Of a
+  file holding several pictures the largest is kept. Without `heif-dec`
+  a HEIC photo is kept but never shown, as before.
 * There is no USB mass-storage mode on LuneOS, so nothing waits for it.
 * `hackAddFiles`, a debugging aid, is gone.
 * Times are seconds since the epoch in UTC.
@@ -195,4 +203,6 @@ Tests
     node --test --test-timeout=30000 tests/*.test.js
 
 They run on the build host, against an in-memory db8 and fake cloud
-services (`tests/fake.js`); GStreamer is not needed.
+services (`tests/fake.js`); GStreamer and heif-dec are not needed. With
+`HEIF_DEC` (a heif-dec to run) and `HEIC_SAMPLE` (a .heic file) set,
+`tests/heif.test.js` also runs the real heif-dec.

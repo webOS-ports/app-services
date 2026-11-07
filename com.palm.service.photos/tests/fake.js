@@ -302,6 +302,36 @@ function jpeg(width, height, {orientation, bigEndian = false} = {}) {
 	return Buffer.concat(parts);
 }
 
+// The head of a HEIF file: its ftyp box (major brand, minor version, compatible brands) and an
+// empty meta box. Enough for the sniffing; no picture any decoder could read.
+function heic(major = 'heic', compatible = ['mif1', 'heic']) {
+	const ftyp = Buffer.alloc(16 + 4 * compatible.length);
+	ftyp.writeUInt32BE(ftyp.length, 0);
+	ftyp.write('ftyp', 4, 'latin1');
+	ftyp.write(major, 8, 'latin1');
+	compatible.forEach((b, i) => ftyp.write(b, 16 + 4 * i, 'latin1'));
+	const meta = Buffer.from([0, 0, 0, 12, 0x6d, 0x65, 0x74, 0x61, 0, 0, 0, 0]);
+	return Buffer.concat([ftyp, meta, Buffer.alloc(256)]);
+}
+
+// A HEIC decoder that writes the JPEG it was given instead of running heif-dec
+class FakeHeif {
+	constructor(picture) {
+		this.picture = picture;
+		this.decoded = [];
+		this.fail = null;
+	}
+
+	async toJpeg(file) {
+		this.decoded.push(path.basename(file));
+		if (this.fail) {
+			throw new Error(this.fail);
+		}
+		fs.writeFileSync(file, this.picture);
+		return require('../lib/imageinfo').probe(file);
+	}
+}
+
 function tmpRoot() {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'photos-test-'));
 	const media = path.join(dir, 'media');
@@ -338,4 +368,4 @@ function fakeDownload(files) {
 	return fn;
 }
 
-module.exports = {FakeBus, FakeDb8, FakeThumbnailer, fakeDownload, png, jpeg, tmpRoot};
+module.exports = {FakeBus, FakeDb8, FakeThumbnailer, FakeHeif, fakeDownload, png, jpeg, heic, tmpRoot};

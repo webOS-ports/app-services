@@ -32,7 +32,7 @@ const ACCOUNT_QUERY = {
 const SYNCSTATE_KIND = 'com.palm.account.syncstate:1';
 
 class PhotosService {
-	constructor({bus, paths, thumbnailer, download = defaultDownload, statfs, now}) {
+	constructor({bus, paths, thumbnailer, download = defaultDownload, statfs, now, heif = null}) {
 		this.bus = bus;
 		this.paths = paths;
 		this.db = new Db(bus);
@@ -56,11 +56,12 @@ class PhotosService {
 		this.library = new Library({
 			db: this.db, bus, paths, accounts: this.accounts, caps: this.caps, cache: this.cache,
 			original: id => this.syncer.original(id),
-			removed: ids => this.storage.forget(ids)
+			removed: ids => this.storage.forget(ids),
+			heif
 		});
 		this.syncer = new SyncEngine({
 			db: this.db, bus, paths, accounts: this.accounts, caps: this.caps,
-			library: this.library, cache: this.cache, download, storage: this.storage
+			library: this.library, cache: this.cache, download, storage: this.storage, heif
 		});
 		this.accounts.on('changed', payload => {
 			for (const notify of this.subscribers) {

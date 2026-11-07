@@ -31,6 +31,7 @@ const path = require('path');
 const log = require('./log');
 const {callProvider} = require('./providers');
 const {probe, displaySize} = require('./imageinfo');
+const {readable} = require('./heif');
 const {exists, freeName, mkdirs, nowSeconds, removeFile, segment, shortHash} = require('./files');
 const {ALBUM_KIND, MEDIA_KIND, IMAGE_KIND, VIDEO_KIND, safeExt} = require('./library');
 
@@ -39,7 +40,7 @@ const LIST_ATTEMPTS = 3;
 const REMOTE = 'remote';
 
 class SyncEngine {
-	constructor({db, bus, paths, accounts, caps, library, cache, download, storage}) {
+	constructor({db, bus, paths, accounts, caps, library, cache, download, storage, heif = null}) {
 		this.db = db;
 		this.bus = bus;
 		this.paths = paths;
@@ -49,6 +50,7 @@ class SyncEngine {
 		this.cache = cache;
 		this.download = download;
 		this.storage = storage;
+		this.heif = heif;              // HeifDecoder: HEIC photos kept as JPEG; null: left unreadable
 		this.enforcing = Promise.resolve();
 		this.running = new Map();      // accountId -> {promise, controller}
 		this.albums = new Map();       // album _id -> the promise of its photos' sync
@@ -341,7 +343,7 @@ class SyncEngine {
 				opts.headers = headers;
 			}
 			await this.download(link, file, opts);
-			if (!await probe(file)) {
+			if (!await readable(file, this.heif, log)) {
 				throw new Error('it is no picture');
 			}
 		} catch (e) {
@@ -717,11 +719,11 @@ class SyncEngine {
 		await this.download(url, file, opts);
 
 		let finalPath = file;
-		let readable = true;
+		let isReadable = true;
 		let info = null;
 		if (!video) {
-			info = await probe(file);
-			readable = !!info;
+			info = await readable(file, this.heif, log);
+			isReadable = !!info;
 			finalPath = await this.namedFor(file, info);
 			if (finalPath !== file) {
 				this.writing.add(finalPath);
@@ -744,7 +746,7 @@ class SyncEngine {
 			accountId: account.accountId,
 			albumPath: album.path,
 			type: account.templateId,
-			appCacheComplete: readable ? 'unattempted' : false,
+			appCacheComplete: isReadable ? 'unattempted' : false,
 			path: finalPath,
 			createdTime: typeof p.createdTime === 'number' ? p.createdTime : nowSeconds()
 		};
@@ -848,7 +850,7 @@ class SyncEngine {
 			let finalPath = file;
 			try {
 				await this.download(link.url, file, opts);
-				const info = await probe(file);
+				const info = await readable(file, this.heif, log);
 				finalPath = await this.namedFor(file, info);
 				this.writing.add(finalPath);
 				signal.throwIfAborted();
@@ -1014,9 +1016,11 @@ function linkKey(link) {
 	}
 }
 
+// A HEIC cover is kept as the JPEG of it (heif.js), so it is named that from the start.
 function coverExt(link) {
 	try {
-		return safeExt(path.extname(new URL(link).pathname)) || '.jpg';
+		const ext = safeExt(path.extname(new URL(link).pathname));
+		return ext === '.heic' || ext === '.heif' ? '.jpg' : ext || '.jpg';
 	} catch (e) {
 		return '.jpg';
 	}

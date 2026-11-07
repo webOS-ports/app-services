@@ -12,8 +12,9 @@ const fsp = require('fs').promises;
 const path = require('path');
 const log = require('./log');
 const {callProvider} = require('./providers');
-const {probe, displaySize} = require('./imageinfo');
-const {albumDirName, copyInto, exists, mkdirs, nowSeconds, removeDir, removeFile, segment} = require('./files');
+const {displaySize} = require('./imageinfo');
+const {readable} = require('./heif');
+const {albumDirName, copyInto, exists, freeName, mkdirs, nowSeconds, removeDir, removeFile, segment} = require('./files');
 
 const ALBUM_KIND = 'com.palm.media.image.album:1';
 const MEDIA_KIND = 'com.palm.media.types:1';
@@ -44,7 +45,7 @@ function isCloud(entry) {
 }
 
 class Library {
-	constructor({db, bus, paths, accounts, caps, cache, original = null, removed = null}) {
+	constructor({db, bus, paths, accounts, caps, cache, original = null, removed = null, heif = null}) {
 		this.db = db;
 		this.original = original;   // _id -> the path of the photo's whole picture, fetched if need be
 		this.removed = removed;     // [_id] of photos removed here: no longer counted for the storage cap
@@ -53,6 +54,7 @@ class Library {
 		this.accounts = accounts;
 		this.caps = caps;           // templateId -> capability
 		this.cache = cache;
+		this.heif = heif;           // HeifDecoder: a HEIC photo's copy kept as JPEG; null: as it is
 		this.reserved = [paths.media, path.join(paths.media, 'screencaptures'), 'camera://'];
 	}
 
@@ -389,7 +391,7 @@ class Library {
 		}
 		await mkdirs(album.path);
 		const ext = path.extname(name);
-		const dst = await copyInto(src, album.path, segment(path.basename(name, ext)) + safeExt(ext));
+		let dst = await copyInto(src, album.path, segment(path.basename(name, ext)) + safeExt(ext));
 		const entry = {
 			_kind: video ? VIDEO_KIND : IMAGE_KIND,
 			albumId: album._id,
@@ -402,7 +404,17 @@ class Library {
 			path: dst,
 			appOriginal: dst
 		};
-		const info = video ? null : await probe(dst);
+		// The service has the HEIC itself; the copy kept here is the JPEG of it
+		const info = video ? null : await readable(dst, this.heif, log);
+		if (info && info.format === 'jpeg' && !/\.jpe?g$/i.test(dst)) {
+			const named = await freeName(album.path, `${path.basename(dst, path.extname(dst))}.jpg`);
+			await fsp.rename(dst, named).catch(async e => {
+				await removeFile(this.paths, dst).catch(() => {});
+				throw e;
+			});
+			dst = named;
+			entry.path = entry.appOriginal = dst;
+		}
 		if (info) {
 			Object.assign(entry, displaySize(info));
 		}
