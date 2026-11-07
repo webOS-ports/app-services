@@ -30,7 +30,7 @@ const fsp = require('fs').promises;
 const path = require('path');
 const log = require('./log');
 const {callProvider} = require('./providers');
-const {probe} = require('./imageinfo');
+const {probe, displaySize} = require('./imageinfo');
 const {exists, freeName, mkdirs, nowSeconds, removeFile, segment, shortHash} = require('./files');
 const {ALBUM_KIND, MEDIA_KIND, IMAGE_KIND, VIDEO_KIND, safeExt} = require('./library');
 
@@ -638,6 +638,7 @@ class SyncEngine {
 			}
 		}
 		await this.db.merge(captions);
+		await this.sizesOf([...have].filter(([pid]) => remote.has(pid)).map(([, entry]) => entry));
 
 		// PHOTO_CONCURRENCY at a time, each written as it comes, so the app shows them coming;
 		// in the order the app shows them (newest first, then by name), so each lands after
@@ -717,8 +718,9 @@ class SyncEngine {
 
 		let finalPath = file;
 		let readable = true;
+		let info = null;
 		if (!video) {
-			const info = await probe(file);
+			info = await probe(file);
 			readable = !!info;
 			finalPath = await this.namedFor(file, info);
 			if (finalPath !== file) {
@@ -754,6 +756,11 @@ class SyncEngine {
 		if (p.caption !== undefined) {
 			entry.caption = p.caption;
 		}
+		// As shown, as the indexer has them for the device's own; of a preview its own size,
+		// which has the picture's shape, until the picture itself comes down
+		if (info) {
+			Object.assign(entry, displaySize(info));
+		}
 		entry[account.templateId] = nested;
 		let id;
 		try {
@@ -766,6 +773,23 @@ class SyncEngine {
 		if (!preview && !video && id) {
 			await this.storage.record(id, album._id, finalPath);
 			await this.budget(new Set([String(id)]));
+		}
+	}
+
+	// Width and height for the photos written before entries had them: read from their files
+	async sizesOf(entries) {
+		const sizes = [];
+		for (const entry of entries) {
+			if (entry.mediaType !== 'image' || entry.width > 0 || !entry.path || !this.paths.inCache(entry.path)) {
+				continue;
+			}
+			const info = await probe(entry.path);
+			if (info) {
+				sizes.push(Object.assign({_id: entry._id}, displaySize(info)));
+			}
+		}
+		if (sizes.length) {
+			await this.db.merge(sizes);
 		}
 	}
 
@@ -824,10 +848,12 @@ class SyncEngine {
 			let finalPath = file;
 			try {
 				await this.download(link.url, file, opts);
-				finalPath = await this.namedFor(file, await probe(file));
+				const info = await probe(file);
+				finalPath = await this.namedFor(file, info);
 				this.writing.add(finalPath);
 				signal.throwIfAborted();
-				await this.db.merge([{_id: entry._id, path: finalPath, appOriginal: finalPath, original: 'local'}]);
+				await this.db.merge([Object.assign({_id: entry._id, path: finalPath, appOriginal: finalPath, original: 'local'},
+					info ? displaySize(info) : {})]);
 			} catch (e) {
 				await removeFile(this.paths, finalPath).catch(() => {});
 				throw e;

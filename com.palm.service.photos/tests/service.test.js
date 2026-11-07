@@ -131,6 +131,11 @@ test('first sync: albums, photos, thumbnails; no link token is kept', async t =>
 	const one = photos.find(p => p[TPL].pid === 'id:1');
 	assert.equal(path.basename(one.path), 'one.jpg', 'fileName used, not the opaque link');
 	assert.equal(one.caption, 'one');
+	// The size as shown, as the indexer gives the device's own: the sideways JPEG stood up
+	assert.deepEqual([one.width, one.height], [3000, 4000]);
+	assert.deepEqual([two.width, two.height], [800, 600]);
+	const rome = photos.find(p => p[TPL].pid === 'id:3');
+	assert.deepEqual([rome.width, rome.height], [1024, 768]);
 	assert.equal(thumbs.made.length, 3);
 	// The sync state the accounts app shows is gone again
 	assert.equal(bus.tempdb.live('com.palm.account.syncstate:1').length, 0);
@@ -443,6 +448,7 @@ test('copies: to a device album as a file, to a cloud album as an upload', async
 	assert.deepEqual(cloud.uploaded, [{accountId: 'acct1', albumId: '/Camera Uploads', path: path.join(src, 'cat.jpg')}]);
 	const copy = photosOf(bus, 'acct1').find(p => p[TPL].pid === 'id:up1');
 	assert.ok(copy && fs.existsSync(copy.path) && copy.albumId === cam._id);
+	assert.deepEqual([copy.width, copy.height], [640, 480], 'the copy\'s size');
 	// The next sync finds the uploaded photo there already
 	assert.equal(albumsOf(bus, 'acct1').find(a => a._id === cam._id).total.images, 3, 'counted again');
 	cloud.photos['/Camera Uploads'].push({pid: 'id:up1', src_big: 'https://dl.example/none', type: 'image'});
@@ -450,6 +456,35 @@ test('copies: to a device album as a file, to a cloud album as an upload', async
 	await sync();
 	assert.equal(photosOf(bus, 'acct1').filter(p => p[TPL].pid === 'id:up1').length, 1);
 	assert.equal(albumsOf(bus, 'acct1').find(a => a._id === cam._id).total.images, 3);
+});
+
+test('photos synced before entries had a size get it from their files at the next sync', async t => {
+	const {bus, svc, download, sync} = setup(t);
+	await svc.start();
+	await sync();
+	const photos = photosOf(bus, 'acct1');
+	for (const p of photos) {
+		delete p.width;
+		delete p.height;
+	}
+	// One whose file is not there: left without
+	const rome = photos.find(p => p[TPL].pid === 'id:3');
+	fs.unlinkSync(rome.path);
+	const fetched = download.fetched.length;
+	const merges = bus.callsTo('com.palm.db', 'merge').length;
+
+	await sync();
+	assert.equal(download.fetched.length, fetched, 'nothing downloaded again');
+	const sizes = Object.fromEntries(photosOf(bus, 'acct1').map(p => [p[TPL].pid, [p.width, p.height]]));
+	assert.deepEqual(sizes, {'id:1': [3000, 4000], 'id:2': [800, 600], 'id:3': [undefined, undefined]});
+
+	// Once they have it, not read again
+	const after = bus.callsTo('com.palm.db', 'merge').length;
+	await sync();
+	const sized = bus.callsTo('com.palm.db', 'merge').slice(after)
+		.filter(c => (c.params.objects || []).some(o => o.width !== undefined));
+	assert.deepEqual(sized, []);
+	assert.ok(after > merges);
 });
 
 test('thumbnails: every waiting entry once, also when it cannot be written back', async t => {
@@ -913,6 +948,7 @@ test('previews: only src_small comes down; the whole picture when the photo is o
 		assert.equal(p.appOriginal, undefined, 'no original yet');
 		assert.ok(fs.existsSync(p.path) && paths.inCache(p.path));
 		assert.equal(p.appCacheComplete, true, 'the grid thumbnail from the preview');
+		assert.deepEqual([p.width, p.height], [320, 240], 'the preview\'s size: the shape, until the picture is here');
 	}
 	const a = photos.find(p => p[TPL].pid === 'Holidays/a.jpg');
 	const preview = a.path;
@@ -923,6 +959,7 @@ test('previews: only src_small comes down; the whole picture when the photo is o
 	const [after] = await svc.db.get([a._id]);
 	assert.equal(after.original, 'local');
 	assert.equal(after.appOriginal, after.path);
+	assert.deepEqual([after.width, after.height], [4000, 3000], 'the whole picture\'s size');
 	assert.notEqual(after.path, preview);
 	assert.ok(!fs.existsSync(preview), 'the preview is gone');
 	assert.ok(fs.existsSync(after.path));
