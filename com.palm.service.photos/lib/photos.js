@@ -16,7 +16,7 @@ const {SerialQueue} = require('./queue');
 const {CacheGenerator, ownerOf} = require('./cache');
 const {Library, isCloud, ALBUM_KIND} = require('./library');
 const {SyncEngine, EXPIRE_DAYS} = require('./sync');
-const {Storage, sizeOf, CAP_CHOICES, FLOOR_BYTES} = require('./storage');
+const {Storage, sizeOf, FLOOR_BYTES} = require('./storage');
 const {callProvider} = require('./providers');
 const {removeDir, removeFile} = require('./files');
 const {download: defaultDownload} = require('./download');
@@ -253,8 +253,8 @@ class PhotosService {
 		const all = await sizeOf(this.paths.cache);
 		return {
 			capBytes: this.storage.settings.capBytes,
-			capChoices: CAP_CHOICES,
-			capNowBytes: await this.storage.cap(kept),
+			capChoices: await this.storage.choices(kept),
+			capNowBytes: await this.storage.cap(),
 			floorBytes: FLOOR_BYTES,
 			freeBytes: await this.storage.free(true),
 			expireDays: EXPIRE_DAYS,

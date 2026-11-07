@@ -1190,17 +1190,32 @@ test('storage: nothing comes down while less than 1 GB is free', async t => {
 	assert.equal(download.fetched.length, n);
 });
 
-test('storage: the cap is 5% of the space there is for the pictures when that is less', async t => {
+test('storage: the sizes offered double up to 256 GB, those that fit; the one set is the cap', async t => {
 	const {svc, api, sync, space, byPid} = withBudget(t);
 	await svc.start();
 	await sync();
-	svc.storage.settings.capBytes = 1024 * 1024 * 1024;
-	space.free = 1.5 * GB;
-	svc.storage.freeAt = 0;
-	const info = await api.getStorage({});
-	assert.equal(info.capNowBytes, Math.floor(1.5 * GB * 0.05));
+	const MBs = r => r.capChoices.map(b => b / 1024 / 1024);
+	// 64 GB free: what fits in it less the 1 GB kept free
+	assert.deepEqual(MBs(await api.getStorage({})), [100, 200, 500, 1024, 2048, 4096, 8192, 16384, 32768]);
+	// Room for a whole size counts: free and what the pictures take now, less the floor
 	await api.fetchOriginal({_id: byPid('a')._id});
-	assert.equal(byPid('a').original, 'local');
+	const taken = svc.storage.usage(new Set()).originals.bytes;
+	// (the disk counts in blocks of 4096)
+	const fits = Math.ceil((3 * GB - taken) / 4096) * 4096;
+	space.free = fits;
+	svc.storage.freeAt = 0;
+	assert.deepEqual(MBs(await api.getStorage({})), [100, 200, 500, 1024, 2048]);
+	space.free = fits - 4096;
+	svc.storage.freeAt = 0;
+	assert.deepEqual(MBs(await api.getStorage({})), [100, 200, 500, 1024]);
+	// No room at all: the smallest still; one set that no longer fits: still shown, and the cap
+	space.free = 900 * 1024 * 1024;
+	svc.storage.freeAt = 0;
+	assert.deepEqual(MBs(await api.getStorage({})), [100]);
+	await api.setStorage({capBytes: 256 * GB});
+	const info = await api.getStorage({});
+	assert.deepEqual(MBs(info), [100, 256 * 1024]);
+	assert.equal(info.capNowBytes, 256 * GB, 'no share of the space: what is set');
 });
 
 test('storage: setStorage takes one of the sizes offered; a smaller one drops pictures at once', async t => {
@@ -1215,7 +1230,10 @@ test('storage: setStorage takes one of the sizes offered; a smaller one drops pi
 	await assert.rejects(api.setStorage({capBytes: 12345}), /capBytes: one of/);
 	const r = await api.setStorage({capBytes: 100 * 1024 * 1024});
 	assert.equal(r.capBytes, 100 * 1024 * 1024);
-	assert.deepEqual(r.capChoices.map(b => b / 1024 / 1024), [100, 200, 500, 1024, 2048]);
+	assert.deepEqual(r.capChoices.slice(0, 4).map(b => b / 1024 / 1024), [100, 200, 500, 1024]);
+	assert.equal((await api.setStorage({capBytes: 256 * GB})).capBytes, 256 * GB, 'up to 256 GB');
+	await assert.rejects(api.setStorage({capBytes: 512 * GB}), /capBytes: one of/);
+	await api.setStorage({capBytes: 100 * 1024 * 1024});
 	// Kept across a restart of the service
 	const again = new (require('../lib/storage').Storage)({paths: svc.paths, statfs: svc.storage.statfs});
 	await again.load();
