@@ -54,7 +54,8 @@ class SyncEngine {
 		this.albums = new Map();       // album _id -> the promise of its photos' sync
 		this.originals = new Map();    // photo _id -> the promise of its full picture
 		this.work = new Map();         // accountId -> Set of the AbortControllers of syncAlbum and original
-		this.writing = new Set();      // files written whose entry has not caught up yet: the sweep leaves them
+		this.writing = new Set();      // files written whose entry has not caught up yet: their names
+		                               // are taken (targetFor, namedFor), the sweep leaves them
 		this.noGetPhoto = new Set();   // services that have no getPhoto
 	}
 
@@ -636,27 +637,40 @@ class SyncEngine {
 		}
 		await this.db.merge(captions);
 
-		let failure = null;
+		// PHOTO_CONCURRENCY at a time, each written as it comes, so the app shows them coming;
+		// in the order the app shows them (newest first, then by name), so each lands after
+		// those already shown rather than among them
+		const queue = [];
 		for (const [pid, p] of remote) {
-			if (have.has(pid)) {
-				continue;
+			if (!have.has(pid) && !(p.type === 'video' && !cap.videoDownload)) {
+				queue.push([pid, p]);
 			}
-			signal.throwIfAborted();
-			if (p.type === 'video' && !cap.videoDownload) {
-				continue;
-			}
-			try {
-				await this.fetchPhoto(account, album, p, signal, headers);
-			} catch (e) {
-				if (signal.aborted) {
-					throw signal.reason;
+		}
+		queue.sort(([, a], [, b]) => shownBefore(a, b));
+		let failure = null;
+		let stop = null;              // the rest would not come down either
+		const worker = async () => {
+			while (queue.length && !stop && !signal.aborted) {
+				const [pid, p] = queue.shift();
+				try {
+					await this.fetchPhoto(account, album, p, signal, headers);
+				} catch (e) {
+					if (signal.aborted) {
+						return;
+					}
+					if (e.code === 'NO_SPACE') {
+						stop = stop || e;
+						return;
+					}
+					log.warn(`photo ${pid} of ${album.name}: ${e.message}`);
+					failure = failure || e;
 				}
-				if (e.code === 'NO_SPACE') {
-					throw e;      // the rest would not come down either
-				}
-				log.warn(`photo ${pid} of ${album.name}: ${e.message}`);
-				failure = failure || e;
 			}
+		};
+		await Promise.all(Array.from({length: Math.min(PHOTO_CONCURRENCY, queue.length)}, worker));
+		signal.throwIfAborted();
+		if (stop) {
+			throw stop;
 		}
 		if (this.paths.inCache(album.path)) {
 			const swept = await this.sweep(album);
@@ -679,7 +693,19 @@ class SyncEngine {
 			throw new Error('no URL to download from');
 		}
 		await this.storage.ensureRoom();
-		const file = await this.targetFor(album, p, url);
+		const file = await this.targetFor(album, p, url);       // taken for it
+		let finalPath = file;
+		try {
+			await this.writePhoto(account, album, p, url, file, video, preview, signal, headers, named => {
+				finalPath = named;
+			});
+		} finally {
+			this.writing.delete(file);
+			this.writing.delete(finalPath);
+		}
+	}
+
+	async writePhoto(account, album, p, url, file, video, preview, signal, headers, renamed) {
 		// A provider's temporary copy (temporary:true) is removed once it is copied
 		const opts = {signal, localRoot: this.paths.media, removeSource: p.temporary === true};
 		if (headers) {
@@ -693,6 +719,10 @@ class SyncEngine {
 			const info = await probe(file);
 			readable = !!info;
 			finalPath = await this.namedFor(file, info);
+			if (finalPath !== file) {
+				this.writing.add(finalPath);
+				renamed(finalPath);
+			}
 		}
 
 		const nested = {pid: p.pid};
@@ -744,7 +774,7 @@ class SyncEngine {
 			return file;
 		}
 		let named = path.join(path.dirname(file), `${path.basename(file, path.extname(file))}.${info.ext}`);
-		if (await exists(named) && await this.inUse(named)) {
+		if (this.writing.has(named) || (await exists(named) && await this.inUse(named))) {
 			named = await freeName(path.dirname(file), path.basename(named));
 		}
 		await fsp.rename(file, named);
@@ -854,6 +884,7 @@ class SyncEngine {
 
 	// Where a photo goes: the name the service gives (fileName), else the
 	// last part of the URL. A name another photo has already gets the id's hash.
+	// The file a photo comes down to, taken (this.writing) until its entry is written
 	async targetFor(album, p, url) {
 		let name = p.fileName;
 		if (!name) {
@@ -865,9 +896,27 @@ class SyncEngine {
 		}
 		const ext = safeExt(path.extname(name));
 		const base = segment(path.basename(name, path.extname(name)) || `photo-${shortHash(p.pid)}`);
-		let file = path.join(album.path, base + ext);
-		if (await exists(file) && await this.inUse(file)) {
-			file = path.join(album.path, `${base}-${shortHash(p.pid)}${ext}`);
+		const file = path.join(album.path, base + ext);
+		const own = path.join(album.path, `${base}-${shortHash(p.pid)}${ext}`);
+		// Taken by another photo coming down now with the same name: taken here before
+		// anything is awaited, so two at once cannot both take it
+		if (this.writing.has(file)) {
+			this.writing.add(own);
+			return own;
+		}
+		this.writing.add(file);
+		// Taken by an entry
+		let taken;
+		try {
+			taken = await exists(file) && await this.inUse(file);
+		} catch (e) {
+			this.writing.delete(file);
+			throw e;
+		}
+		if (taken) {
+			this.writing.delete(file);
+			this.writing.add(own);
+			return own;
 		}
 		return file;
 	}
@@ -911,6 +960,21 @@ const isLink = v => typeof v === 'string' && v !== '';
 // An album's cover in its directory: the sweep, which is for the photos' files, leaves it
 const COVER_PREFIX = '.cover-';
 const COVER_CONCURRENCY = 4;
+// An opened album's photos (their previews) coming down at once
+const PHOTO_CONCURRENCY = 4;
+
+// The app's order of an album's pictures (its compareItems): newest first, then by name. A
+// photo the listing gives no time gets the time it comes down, so it is shown first.
+function shownBefore(a, b) {
+	const ta = typeof a.createdTime === 'number' ? a.createdTime : Infinity;
+	const tb = typeof b.createdTime === 'number' ? b.createdTime : Infinity;
+	if (ta !== tb) {
+		return ta === Infinity ? -1 : tb === Infinity ? 1 : tb - ta;
+	}
+	const na = String(a.fileName || '');
+	const nb = String(b.fileName || '');
+	return na < nb ? -1 : na > nb ? 1 : 0;
+}
 const EXPIRE_DAYS = 30;
 
 // What tells one cover from another: the link without its query, where tokens change

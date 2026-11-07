@@ -799,6 +799,88 @@ test('covers: four at a time', async t => {
 	assert.equal(albumsOf(bus, 'acct1').filter(a => a.coverPath).length, 11);
 });
 
+test('an opened album\'s photos: four at a time, each written as it comes; one name twice, two files', async t => {
+	const photos = [];
+	for (let i = 0; i < 10; i++) {
+		photos.push({pid: `Big/p${i}`, src_big: `https://g.example/p${i}.jpg`, type: 'image', fileName: `p${i}.jpg`,
+			createdTime: 1700000000 + (i % 2 ? i : 20 - i) * 60});
+	}
+	// Two photos of one name, which come down together (no time: shown first)
+	photos.push({pid: 'Big/x/same', src_big: 'https://g.example/x/same.jpg', type: 'image', fileName: 'same.jpg'});
+	photos.push({pid: 'Big/y/same', src_big: 'https://g.example/y/same.jpg', type: 'image', fileName: 'same.jpg'});
+	const {svc, api, files, bus} = setup(t, {albums: [{aid: 'Big', name: 'Big', size: {images: photos.length}}], photos: {Big: photos}});
+	for (const p of photos) {
+		files.set(p.src_big, jpeg(640, 480));
+	}
+	const download = svc.syncer.download;
+	let active = 0;
+	let most = 0;
+	const writtenAtStart = [];
+	const order = [];
+	const fetchPhoto = svc.syncer.fetchPhoto.bind(svc.syncer);
+	svc.syncer.fetchPhoto = (account, album, p, ...rest) => {
+		order.push(p.src_big.replace('https://g.example/', ''));
+		return fetchPhoto(account, album, p, ...rest);
+	};
+	svc.syncer.download = async (url, ...rest) => {
+		active++;
+		most = Math.max(most, active);
+		writtenAtStart.push(photosOf(bus, 'acct1').length);
+		// The two of one name finish together
+		await new Promise(r => setTimeout(r, /same/.test(url) ? 20 : 5));
+		active--;
+		return download(url, ...rest);
+	};
+	await svc.start();
+	await api.syncSingleAccount({accountId: 'acct1'});
+	const big = albumsOf(bus, 'acct1').find(a => a.name === 'Big');
+	assert.deepEqual(await api.syncAlbum({albumId: big._id}), {returnValue: true, photos: photos.length});
+	assert.equal(most, 4);
+	// In the app's order: no time first (by name), then newest first
+	const newestFirst = photos.slice(0, 10).sort((a, b) => b.createdTime - a.createdTime).map(p => p.src_big.replace('https://g.example/', ''));
+	assert.deepEqual(order, ['x/same.jpg', 'y/same.jpg'].concat(newestFirst));
+	assert.notDeepEqual(newestFirst, photos.slice(0, 10).map(p => p.src_big.replace('https://g.example/', '')).reverse(), 'not the listing\'s order turned round');
+	assert.ok(writtenAtStart[writtenAtStart.length - 1] > 0, 'the first written while the rest come down');
+	const got = photosOf(bus, 'acct1');
+	assert.equal(got.length, photos.length);
+	const same = got.filter(p => /same/.test(p[TPL].pid));
+	assert.equal(same.length, 2);
+	assert.notEqual(same[0].path, same[1].path, 'each its own file');
+	assert.ok(same.every(p => fs.existsSync(p.path)));
+	assert.equal(svc.syncer.writing.size, 0, 'nothing left claimed');
+});
+
+test('an opened album\'s photos: out of space stops the rest; a failing one not', async t => {
+	const photos = [];
+	for (let i = 0; i < 9; i++) {
+		photos.push({pid: `Big/p${i}`, src_big: `https://g.example/p${i}.jpg`, type: 'image', fileName: `p${i}.jpg`});
+	}
+	const {svc, api, files, bus} = setup(t, {albums: [{aid: 'Big', name: 'Big', size: {images: photos.length}}], photos: {Big: photos}});
+	for (const p of photos) {
+		files.set(p.src_big, jpeg(640, 480));
+	}
+	files.delete('https://g.example/p0.jpg');            // that one fails to come down
+	await svc.start();
+	await api.syncSingleAccount({accountId: 'acct1'});
+	const big = albumsOf(bus, 'acct1').find(a => a.name === 'Big');
+	await assert.rejects(api.syncAlbum({albumId: big._id}), /HTTP 404/, 'the failing one fails the sync');
+	assert.equal(photosOf(bus, 'acct1').length, 8, 'but the rest came down');
+	// Out of space after the third: none is begun after it
+	svc.db.del(photosOf(bus, 'acct1').map(p => p._id));
+	const ensure = svc.storage.ensureRoom.bind(svc.storage);
+	let asked = 0;
+	svc.storage.ensureRoom = async () => {
+		if (++asked > 3) {
+			const {NoSpaceError} = require('../lib/storage');
+			throw new NoSpaceError(0);
+		}
+		return ensure();
+	};
+	await assert.rejects(api.syncAlbum({albumId: big._id}), /not enough free space/);
+	assert.equal(asked, 4, 'the four under way, and none begun after the first that had no room');
+	assert.equal(svc.syncer.writing.size, 0);
+});
+
 // A gallery whose photos have a preview of their own (PiGallery2, Immich, PhotoPrism)
 function withPreviews(t, {getPhoto} = {}) {
 	const ctx = setup(t, {
