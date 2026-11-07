@@ -14,7 +14,7 @@ const log = require('../lib/log');
 const {Paths} = require('../lib/files');
 const {PhotosService} = require('../lib/photos');
 const {methods} = require('../lib/methods');
-const {FakeBus, FakeThumbnailer, fakeDownload, png, jpeg, tmpRoot} = require('./fake');
+const {FakeBus, FakeThumbnailer, FakeHeif, fakeDownload, png, jpeg, heic, tmpRoot} = require('./fake');
 
 log.setQuiet(true);
 
@@ -23,7 +23,7 @@ const GB = 1024 * 1024 * 1024;
 const SVC = 'com.palm.service.dropbox';
 
 // A Dropbox-like account with its albums and photos, and the bytes behind the photos' links
-function setup(t, {albums, photos} = {}) {
+function setup(t, {albums, photos, heif = null} = {}) {
 	const root = tmpRoot();
 	t.after(root.cleanup);
 	const bus = new FakeBus();
@@ -76,7 +76,7 @@ function setup(t, {albums, photos} = {}) {
 	const space = {free: 64 * GB};
 	const clock = {t: Date.UTC(2026, 10, 1)};
 	const statfs = async () => ({bavail: Math.floor(space.free / 4096), bsize: 4096});
-	const svc = new PhotosService({bus, paths, thumbnailer: thumbs, download, statfs, now: () => clock.t});
+	const svc = new PhotosService({bus, paths, thumbnailer: thumbs, download, statfs, now: () => clock.t, heif});
 	t.after(() => svc.stop());
 	const api = methods(svc);
 	// A sync, and every album it brought opened, as the app opens one: everything comes down
@@ -1429,4 +1429,110 @@ test('storage: a picture bigger than the cap is kept while it is the one just op
 	await api.fetchOriginal({_id: byPid('b')._id});
 	assert.equal(byPid('a').original, 'remote', 'the next one opened: it goes');
 	assert.equal(byPid('b').original, 'local');
+});
+
+// --- HEIC ------------------------------------------------------------------------------------
+
+function withHeic(t, {heif = new FakeHeif(jpeg(3024, 4032)), photos, albums} = {}) {
+	const ctx = setup(t, {
+		heif,
+		albums: albums || [{aid: 'iPhone', name: 'iPhone', size: {images: 2}}],
+		photos: photos || {iPhone: [
+			{pid: 'iPhone/IMG_1.HEIC', src_big: 'https://h.example/IMG_1.HEIC', type: 'image', fileName: 'IMG_1.HEIC'},
+			{pid: 'iPhone/IMG_2.jpg', src_big: 'https://h.example/IMG_2.jpg', type: 'image', fileName: 'IMG_2.jpg'}
+		]}
+	});
+	ctx.files.set('https://h.example/IMG_1.HEIC', heic());
+	ctx.files.set('https://h.example/IMG_2.jpg', jpeg(1600, 1200));
+	return Object.assign(ctx, {heif});
+}
+
+test('HEIC: kept as the JPEG of it, named .jpg, with its size and thumbnails', async t => {
+	const {bus, svc, thumbs, heif, sync} = withHeic(t);
+	await svc.start();
+	assert.deepEqual(await sync(), {returnValue: true});
+	assert.deepEqual(heif.decoded, ['IMG_1.heic'], 'only the HEIC goes through heif-dec');
+	const photos = photosOf(bus, 'acct1');
+	const one = photos.find(p => p[TPL].pid === 'iPhone/IMG_1.HEIC');
+	assert.equal(path.basename(one.path), 'IMG_1.jpg');
+	assert.equal(one.appOriginal, one.path);
+	assert.deepEqual(fs.readFileSync(one.path), jpeg(3024, 4032));
+	assert.deepEqual([one.width, one.height], [3024, 4032]);
+	assert.equal(one.appCacheComplete, true);
+	assert.equal(one[TPL].fileName, 'IMG_1.HEIC', 'the cloud\'s own name kept');
+	assert.ok(thumbs.made.some(m => m.src === one.path));
+	assert.ok(!fs.readdirSync(path.dirname(one.path)).some(n => /\.heic$/i.test(n)), 'no HEIC left');
+	const two = photos.find(p => p[TPL].pid === 'iPhone/IMG_2.jpg');
+	assert.deepEqual([two.width, two.height], [1600, 1200]);
+});
+
+test('HEIC: without heif-dec, or when it fails, a photo that is never shown, as before', async t => {
+	for (const heif of [null, Object.assign(new FakeHeif(jpeg(10, 10)), {fail: 'heif-dec exited with 1'})]) {
+		const {bus, svc, sync} = withHeic(t, {heif});
+		await svc.start();
+		await sync();
+		const one = photosOf(bus, 'acct1').find(p => p[TPL].pid === 'iPhone/IMG_1.HEIC');
+		assert.equal(one.appCacheComplete, false, 'kept but never shown');
+		assert.equal(one.width, undefined);
+		assert.deepEqual(fs.readFileSync(one.path), heic(), 'the file as it came');
+		await svc.stop();
+	}
+});
+
+test('HEIC: a preview\'s whole picture, when opened, is the JPEG of it too', async t => {
+	const {bus, svc, files, heif, sync} = withHeic(t, {photos: {iPhone: [
+		{pid: 'iPhone/IMG_3.HEIC', src_big: 'https://h.example/IMG_3.HEIC', src_small: 'https://h.example/IMG_3.HEIC/1024', type: 'image', fileName: 'IMG_3.HEIC'}
+	]}, albums: [{aid: 'iPhone', name: 'iPhone', size: {images: 1}}]});
+	files.set('https://h.example/IMG_3.HEIC/1024', jpeg(768, 1024));
+	files.set('https://h.example/IMG_3.HEIC', heic());
+	bus.providers[SVC].getPhoto = () => ({returnValue: true, src_big: 'https://h.example/IMG_3.HEIC', fileName: 'IMG_3.HEIC'});
+	await svc.start();
+	await sync();
+	assert.deepEqual(heif.decoded, [], 'the preview is a JPEG already');
+	const [p] = photosOf(bus, 'acct1');
+	assert.equal(p.original, 'remote');
+	const whole = await svc.syncer.original(p._id);
+	assert.deepEqual(heif.decoded, ['IMG_3.heic']);
+	assert.equal(path.extname(whole), '.jpg');
+	const [after] = await svc.db.get([p._id]);
+	assert.deepEqual([after.path, after.original, after.width, after.height], [whole, 'local', 3024, 4032]);
+	assert.ok(!fs.existsSync(p.path) || p.path === whole, 'the preview replaced');
+});
+
+test('HEIC: a cover is kept as the JPEG of it, under a .jpg name', async t => {
+	const {bus, svc, api, files, heif} = withHeic(t, {
+		albums: [{aid: 'iPhone', name: 'iPhone', size: {images: 1}, cover: 'https://h.example/cover/IMG_9.HEIC'}],
+		photos: {iPhone: []}
+	});
+	files.set('https://h.example/cover/IMG_9.HEIC', heic());
+	await svc.start();
+	assert.deepEqual(await api.syncSingleAccount({accountId: 'acct1'}), {returnValue: true});
+	const [album] = albumsOf(bus, 'acct1');
+	assert.match(path.basename(album.coverPath), /^\.cover-[0-9a-f]{10}\.jpg$/);
+	assert.deepEqual(fs.readFileSync(album.coverPath), jpeg(3024, 4032));
+	assert.equal(heif.decoded.length, 1);
+	// the next sync sees it has it
+	await api.syncSingleAccount({accountId: 'acct1'});
+	assert.equal(heif.decoded.length, 1);
+});
+
+test('HEIC: a device photo copied to a cloud album goes up as it is; the copy kept here is the JPEG', async t => {
+	const {bus, svc, api, root, cloud, heif, sync} = withHeic(t);
+	await svc.start();
+	await sync();
+	const src = path.join(root.media, 'DCIM');
+	fs.mkdirSync(src);
+	fs.writeFileSync(path.join(src, 'IMG_5.HEIC'), heic());
+	const local = bus.db.handle('put', {objects: [{_kind: 'com.palm.media.image.file:1', mediaType: 'image',
+		path: path.join(src, 'IMG_5.HEIC'), albumId: 'dcim', appCacheComplete: true}]}).results[0].id;
+	const album = albumsOf(bus, 'acct1')[0];
+	assert.equal((await api.addPhotos({specs: [{targetAlbum: album._id, photos: [local]}]})).returnValue, true);
+	assert.deepEqual(cloud.uploaded.map(u => u.path), [path.join(src, 'IMG_5.HEIC')], 'the cloud gets the HEIC');
+	assert.deepEqual(fs.readFileSync(path.join(src, 'IMG_5.HEIC')), heic(), 'the device\'s own file untouched');
+	const copy = photosOf(bus, 'acct1').find(p => p[TPL].pid === 'id:up1');
+	assert.equal(path.basename(copy.path), 'IMG_5.jpg');
+	assert.equal(copy.appOriginal, copy.path);
+	assert.deepEqual([copy.width, copy.height], [3024, 4032]);
+	assert.ok(!fs.existsSync(path.join(album.path, 'IMG_5.HEIC')) && !fs.existsSync(path.join(album.path, 'IMG_5.heic')));
+	assert.deepEqual(heif.decoded.slice(-1), ['IMG_5.heic']);
 });
