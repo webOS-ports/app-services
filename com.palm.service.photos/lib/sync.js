@@ -146,7 +146,7 @@ class SyncEngine {
 		}
 		const acc = Object.assign({accountId: album.accountId}, account);
 		return this.accounts.track(album.accountId, 'sync', () => this.forAccount(album.accountId, async signal => {
-			// When it was last opened: an album not opened for EXPIRE_DAYS goes back to unopened
+			// When it was last opened: an album not opened for expireDays goes back to unopened
 			await this.db.merge([{_id: album._id, listed: true, openedTime: this.nowSeconds()}]);
 			album.listed = true;
 			if (!this.paths.inCache(album.path)) {
@@ -439,9 +439,11 @@ class SyncEngine {
 		}
 	}
 
-	// Opened albums not opened again for EXPIRE_DAYS go back to unopened, unless kept. One
-	// opened before openedTime was kept is taken as opened now.
+	// Opened albums not opened again for the setting's expireDays go back to unopened, unless
+	// kept (none with 0: never). One opened before openedTime was kept is taken as opened now.
 	async expire(synced) {
+		await this.storage.load();
+		const days = this.storage.settings.expireDays;
 		const now = this.nowSeconds();
 		for (const {album} of synced.values()) {
 			if (album.listed !== true || album.keep === true || this.albums.has(album._id)) {
@@ -450,8 +452,8 @@ class SyncEngine {
 			if (!Number.isFinite(album.openedTime)) {
 				await this.db.merge([{_id: album._id, openedTime: now}]);
 				album.openedTime = now;
-			} else if (album.openedTime < now - EXPIRE_DAYS * 86400) {
-				log.info(`album ${album.name} not opened for ${EXPIRE_DAYS} days: its photos go`);
+			} else if (days > 0 && album.openedTime < now - days * 86400) {
+				log.info(`album ${album.name} not opened for ${days} days: its photos go`);
 				await this.unlist(album);
 			}
 		}
@@ -975,7 +977,6 @@ function shownBefore(a, b) {
 	const nb = String(b.fileName || '');
 	return na < nb ? -1 : na > nb ? 1 : 0;
 }
-const EXPIRE_DAYS = 30;
 
 // What tells one cover from another: the link without its query, where tokens change
 function linkKey(link) {
@@ -1038,4 +1039,4 @@ function total(size) {
 	};
 }
 
-module.exports = {SyncEngine, downloadHeaders, EXPIRE_DAYS};
+module.exports = {SyncEngine, downloadHeaders};

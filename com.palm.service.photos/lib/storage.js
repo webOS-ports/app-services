@@ -10,11 +10,12 @@
 // unless changed), one of CAP_CHOICES; of those, the ones offered are those that fit in the
 // space there is for them (choices). Past the cap, those opened longest ago go back to their
 // preview (the sync engine drops them). Nothing comes down while less than FLOOR_BYTES is
-// free. The pictures of albums kept on the device count for neither.
+// free. The pictures of albums kept on the device count for neither. An album not opened
+// for expireDays (30 unless changed, 0 for never) goes back to unopened (the sync engine).
 //
 // The photo entries are the media indexer's kind, which cannot be searched by when a photo
 // was opened, so that is kept here, in .photosApp/.storage.json, with the settings:
-// {settings: {capBytes}, originals: {<_id>: {bytes, opened, albumId}}}.
+// {settings: {capBytes, expireDays}, originals: {<_id>: {bytes, opened, albumId}}}.
 
 const fsp = require('fs').promises;
 const path = require('path');
@@ -26,6 +27,9 @@ const GB = 1024 * MB;
 // 100, 200 and 500 MB, then doubling from 1 GB to 256 GB
 const CAP_CHOICES = [100 * MB, 200 * MB, 500 * MB, ...Array.from({length: 9}, (_, i) => GB * 2 ** i)];
 const FLOOR_BYTES = GB;
+// Days an opened album is kept unopened before its photos go; 0: never
+const DEFAULT_EXPIRE_DAYS = 30;
+const EXPIRE_CHOICES = [7, 14, 30, 60, 90, 0];
 const FREE_CACHE_MS = 5000;
 
 class NoSpaceError extends Error {
@@ -41,7 +45,7 @@ class Storage {
 		this.file = path.join(paths.cache, '.storage.json');
 		this.statfs = statfs;
 		this.now = now;
-		this.settings = {capBytes: DEFAULT_CAP_BYTES};
+		this.settings = {capBytes: DEFAULT_CAP_BYTES, expireDays: DEFAULT_EXPIRE_DAYS};
 		this.originals = new Map();
 		this.loaded = null;
 		this.saving = Promise.resolve();
@@ -66,6 +70,10 @@ class Storage {
 					const cap = data.settings && data.settings.capBytes;
 					if (validCap(cap)) {
 						this.settings.capBytes = cap;
+					}
+					const days = data.settings && data.settings.expireDays;
+					if (EXPIRE_CHOICES.includes(days)) {
+						this.settings.expireDays = days;
 					}
 					for (const [id, o] of Object.entries(data.originals || {})) {
 						if (o && Number.isFinite(o.bytes) && Number.isFinite(o.opened)) {
@@ -165,6 +173,15 @@ class Storage {
 		return out;
 	}
 
+	async setExpire(days) {
+		await this.load();
+		if (!EXPIRE_CHOICES.includes(days)) {
+			throw new Error(`expireDays: one of ${EXPIRE_CHOICES.join(', ')}`);
+		}
+		this.settings.expireDays = days;
+		await this.save();
+	}
+
 	// The cap: the setting (the floor stops what comes down before the disk fills)
 	async cap() {
 		return this.settings.capBytes;
@@ -224,4 +241,5 @@ async function sizeOf(dir) {
 	return total;
 }
 
-module.exports = {Storage, NoSpaceError, sizeOf, DEFAULT_CAP_BYTES, CAP_CHOICES, FLOOR_BYTES};
+module.exports = {Storage, NoSpaceError, sizeOf, DEFAULT_CAP_BYTES, CAP_CHOICES, FLOOR_BYTES,
+	DEFAULT_EXPIRE_DAYS, EXPIRE_CHOICES};
