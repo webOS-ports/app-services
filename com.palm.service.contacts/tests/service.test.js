@@ -97,6 +97,24 @@ describe('com.palm.service.contacts', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
+	it('a card with only an FN gets its name from it, as Android\'s Telegram shares contacts', async () => {
+		const env = await boot();
+		const dir = tmpDir();
+		const file = path.join(dir, 'tg.vcf');
+		fs.writeFileSync(file,
+			'BEGIN:VCARD\r\nVERSION:2.1\r\nFN:Jane Doe\r\nTEL;CELL:+31600000000\r\nTEL;CELL:+31600000001\r\nEND:VCARD\r\n' +
+			'BEGIN:VCARD\r\nFN:Jan van der Berg\r\nEND:VCARD\r\n' +
+			'BEGIN:VCARD\r\nFN:Cher\r\nEND:VCARD\r\n' +
+			'BEGIN:VCARD\r\nN:Roe;Richard;;;\r\nFN:Dick Roe\r\nEND:VCARD\r\n' +
+			'BEGIN:VCARD\r\nN:;;;Dr.;\r\nFN:Ann Lee\r\nEND:VCARD\r\n');
+		const r = await env.ask('readVCard', {filePath: 'file://' + file});
+		const names = r.contacts.map(c => [c.name.givenName, c.name.familyName]);
+		assert.deepEqual(names, [['Jane', 'Doe'], ['Jan', 'van der Berg'], ['Cher', ''], ['Richard', 'Roe'], ['Ann', 'Lee']]);
+		assert.equal(r.contacts[4].name.honorificPrefix, 'Dr.');
+		assert.deepEqual(r.contacts[0].phoneNumbers.map(n => n.type), ['type_mobile', 'type_mobile']);
+		env.stop();
+	});
+
 	it('a vCard path must be a file:// URL', async () => {
 		const env = await boot();
 		const r = await env.ask('readVCard', {filePath: '/x.vcf'});

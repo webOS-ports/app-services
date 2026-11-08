@@ -319,6 +319,10 @@ function handleLine(c, line, file) {
 			middleName: pieces[2] || '', honorificPrefix: pieces[3] || '', honorificSuffix: pieces[4] || ''});
 		break;
 	}
+	case MARKERS.FULL_NAME:
+		// webOS: kept for a card with no N (nameFromFullName).
+		c.fullName = unescapeString(lineValue(line)).trim();
+		break;
 	case MARKERS.NICKNAME:
 		c.values.nickname = unescapeString(lineValue(line));
 		break;
@@ -384,6 +388,34 @@ function handleLine(c, line, file) {
 	}
 }
 
+// The particles that go with the family name that follows them ("Jan van der Berg").
+const NAME_PARTICLES = ['van', 'der', 'den', 'de', 'het', 'ten', 'ter', 'te', 'von', 'zu', 'vom', 'da', 'di', 'do',
+	'dos', 'das', 'del', 'della', 'du', 'des', 'le', 'la', 'st.', "'t", 'op', 'in'];
+
+/*
+	webOS: a card with an FN (formatted name) and no N, or an N with no
+	given or family name, gets its name from the FN. Android's Telegram
+	shares contacts that way, and a card read with no name was offered to
+	Contacts with only its numbers. One word is a given name; otherwise the
+	last word is the family name, with the particles before it, and the rest
+	the given name.
+*/
+function nameFromFullName(c) {
+	const n = c.values.name;
+	if (!c.fullName || (n && (n.givenName || n.familyName))) {
+		return;
+	}
+	const words = c.fullName.split(/\s+/).filter(w => w);
+	let at = words.length - 1;
+	while (at > 1 && NAME_PARTICLES.indexOf(words[at - 1].toLowerCase()) !== -1) {
+		at -= 1;
+	}
+	const given = words.length > 1 ? words.slice(0, at).join(' ') : words.join(' ');
+	const family = words.length > 1 ? words.slice(at).join(' ') : '';
+	c.values.name = newEntry('Name', {familyName: family, givenName: given, middleName: (n && n.middleName) || '',
+		honorificPrefix: (n && n.honorificPrefix) || '', honorificSuffix: (n && n.honorificSuffix) || ''});
+}
+
 // The contact as getDBObject() gave it.
 function record(c) {
 	return newContact(Object.assign({}, c.values, c.kind ? {_kind: c.kind} : {}, c.accountId !== undefined ?
@@ -437,6 +469,9 @@ async function importCards(path, save, {openError = false} = {}) {
 		}
 		if (!ended) {
 			return all;
+		}
+		if (current) {
+			nameFromFullName(current);
 		}
 		if (save) {
 			await save(current);
