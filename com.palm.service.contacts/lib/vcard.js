@@ -168,6 +168,11 @@ function extractLabel(line) {
 		if (t.indexOf(l) !== -1) {
 			return l;
 		}
+		// webOS: "MOBILE" is a cell phone too - WhatsApp's shared contacts say TEL;type=Mobile, where
+		// the vCard standard says CELL - and ranks where CELL does.
+		if (l === 'CELL' && t.indexOf('MOBILE') !== -1) {
+			return 'CELL';
+		}
 	}
 	return 'OTHER';
 }

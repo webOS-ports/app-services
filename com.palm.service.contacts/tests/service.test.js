@@ -80,6 +80,23 @@ describe('com.palm.service.contacts', {skip: NO_FRAMEWORKS}, () => {
 		env.stop();
 	});
 
+	it('reads TYPE=Mobile as a mobile number, as WhatsApp\'s shared contacts write it', async () => {
+		const env = await boot();
+		const dir = tmpDir();
+		const file = path.join(dir, 'wa.vcf');
+		fs.writeFileSync(file, 'BEGIN:VCARD\nVERSION:3.0\nN:Doe;Jane;;;\nFN:Jane Doe\n' +
+			'TEL;type=Mobile;waid=31600000000:+31 6 0000 0000\nTEL;type=WORK;type=MOBILE:+31 20 000 0000\n' +
+			'TEL;type=HOME:+31 20 000 0001\nTEL:+31 20 000 0002\nEND:VCARD\n');
+		const r = await env.ask('readVCard', {filePath: 'file://' + file});
+		assert.deepEqual(r.contacts[0].phoneNumbers.map(n => [n.value, n.type]), [
+			['+31 6 0000 0000', 'type_mobile'],
+			['+31 20 000 0000', 'type_work'],
+			['+31 20 000 0001', 'type_home'],
+			['+31 20 000 0002', 'type_other']
+		]);
+		env.stop();
+	});
+
 	it('a vCard path must be a file:// URL', async () => {
 		const env = await boot();
 		const r = await env.ask('readVCard', {filePath: '/x.vcf'});
