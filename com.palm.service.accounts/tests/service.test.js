@@ -244,6 +244,22 @@ test('createLocalAccount: the profile account once, and the first-use flag', asy
 	});
 });
 
+test('createLocalAccount: a profile that is already there still gets the first-use flag', async () => {
+	// What signing in to the community account during first use leaves: the
+	// palmprofile account exists, the flag does not. Without the flag
+	// LunaAppManager never leaves first use, and every boot goes back into it.
+	await withService({}, async s => {
+		await s.ask('createLocalAccount', {}, {});
+		await s.settle();
+		fs.unlinkSync(s.flagPath);
+		const r = await s.ask('createLocalAccount', {}, {});
+		assert.deepStrictEqual(r, {returnValue: true, accountCreated: false});
+		assert.ok(fs.existsSync(s.flagPath), 'flag written for the existing profile');
+		assert.strictEqual(s.accounts().filter(a => a.templateId === 'com.palm.palmprofile').length, 1,
+			'and no second profile made');
+	});
+});
+
 test('setPrefs and appsChanged: the device name on the profile account; templates read again', async () => {
 	await withService({}, async s => {
 		await s.ask('createLocalAccount', {}, {});

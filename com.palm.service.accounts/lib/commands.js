@@ -780,7 +780,21 @@ function createCommands({db, pc, keystore, templates, reloadTemplates, log = con
 			makeLocalAccount('LuneOS');
 			return {returnValue: true, accountCreated: true};
 		}
+		// The profile is already there - made during first use by signing in to
+		// the community account, or left from an earlier run. The flag still has
+		// to be written: it is what LunaAppManager waits for to leave first use,
+		// and without it every boot goes back into first use.
+		writeProfileFlag();
 		return {returnValue: true, accountCreated: false};
+	}
+
+	// The flag that tells LunaAppManager (BootManager) the profile account is there.
+	function writeProfileFlag() {
+		try {
+			fs.closeSync(fs.openSync(flagPath, 'w'));
+		} catch (e) {
+			log.error('could not write ' + flagPath + ': ' + e.message);
+		}
 	}
 
 	function makeLocalAccount(username) {
@@ -801,12 +815,7 @@ function createCommands({db, pc, keystore, templates, reloadTemplates, log = con
 		log.log('Creating a palmprofile account with username:' + username);
 		pc.call(SELF, 'createAccount', account).then(created => {
 			log.log('----------- local acct created successfully ------------' + JSON.stringify(created.result && created.result._id));
-			// The flag that tells the upstart job the profile account is there.
-			try {
-				fs.closeSync(fs.openSync(flagPath, 'w'));
-			} catch (e) {
-				log.error('could not write ' + flagPath + ': ' + e.message);
-			}
+			writeProfileFlag();
 		}, e => {
 			log.log('----------- local acct creation failed ------------' + JSON.stringify(e));
 		});
