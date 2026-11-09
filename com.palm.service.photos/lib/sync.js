@@ -35,9 +35,23 @@ const {readable} = require('./heif');
 const {exists, freeName, mkdirs, nowSeconds, removeFile, segment, shortHash} = require('./files');
 const {ALBUM_KIND, MEDIA_KIND, IMAGE_KIND, VIDEO_KIND, safeExt} = require('./library');
 
+// Each call; a listing that takes longer goes on as the connector's job (providers.js)
 const LIST_TIMEOUT_MS = 60000;
 const LIST_ATTEMPTS = 3;
 const REMOTE = 'remote';
+
+// callProvider's options for a listing: continuable, and how far it has got in the log
+function listing(signal, what) {
+	let said = 0;
+	return {timeoutMs: LIST_TIMEOUT_MS, attempts: LIST_ATTEMPTS, signal, continuable: true,
+		onProgress: p => {
+			const n = Object.values(p).find(Number.isFinite);
+			if (n !== undefined && n >= said + 100) {
+				said = n;
+				log.info(`${what}: still listing, ${Object.entries(p).map(([k, v]) => `${v} ${k}`).join(', ')}`);
+			}
+		}};
+}
 
 class SyncEngine {
 	constructor({db, bus, paths, accounts, caps, library, cache, download, storage, heif = null}) {
@@ -180,7 +194,7 @@ class SyncEngine {
 			return {albums: 0};
 		}
 		const remote = await callProvider(this.bus, cap, 'listAlbums', {accountId: account.accountId},
-			{timeoutMs: LIST_TIMEOUT_MS, attempts: LIST_ATTEMPTS, signal});
+			listing(signal, `${account.templateId} albums`));
 		signal.throwIfAborted();
 		await mkdirs(this.paths.accountDir(account.templateId, account.username));
 
@@ -605,7 +619,7 @@ class SyncEngine {
 			params.albumId = album.aid;       // what that service reads
 		}
 		const listed = await callProvider(this.bus, cap, 'listPhotos', params,
-			{timeoutMs: LIST_TIMEOUT_MS, attempts: LIST_ATTEMPTS, signal});
+			listing(signal, `${account.templateId} album ${album.name}`));
 		const headers = downloadHeaders(listed.headers);
 		const remote = new Map();
 		for (const p of listed.photos || []) {
@@ -904,7 +918,7 @@ class SyncEngine {
 			params.albumId = album.aid;
 		}
 		const listed = await callProvider(this.bus, cap, 'listPhotos', params,
-			{timeoutMs: LIST_TIMEOUT_MS, attempts: LIST_ATTEMPTS, signal});
+			listing(signal, `${account.templateId} album ${album.name}`));
 		const p = (listed.photos || []).find(x => x && x.pid !== undefined && x.pid !== null && String(x.pid) === String(pid));
 		if (!p || !isLink(p.src_big)) {
 			throw new Error(`photo ${pid} is not in ${album.name} any more`);

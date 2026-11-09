@@ -41,6 +41,20 @@ A connector's service answers:
 | `upload` | `accountId, albumId (the aid), path` | `pid` |
 | `deletePhoto` | `accountId, pid` | |
 
+A listing may take longer than one call: a gallery of thousands of
+folders is walked one folder at a time. `listAlbums` and `listPhotos` are
+asked with `continuable: true`, and a connector that is still working
+answers `pending: true` with a `jobId` (and `progress`, such as
+`{folders: 2400}`), carrying on in the background. The service asks again
+with that `jobId`, a second or so later, until the answer comes: each call
+waits a minute at most, the listing as a whole half an hour. A call that
+gets no answer is tried again with the `jobId`, so the work goes on where
+it was rather than starting over; three in a row fail the sync. A
+connector that no longer knows the job (it was restarted) is asked once
+more from the start. One from before this ignores `continuable` and
+answers in one call, as it always did. The connectors' side is
+`_cloudcore/node/jobs.js` in luneos-synergy-connectors.
+
 Only what is looked at comes down. A sync lists the albums
 (`listAlbums`), not their photos: an album's photos are listed once the
 app has opened it (`syncAlbum`; its entry is then `listed: true`), and
