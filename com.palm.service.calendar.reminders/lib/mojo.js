@@ -44,11 +44,15 @@ function reply(result) {
 	return result;
 }
 
+// exception carries an Error as its one-line "Name: message", not its stack:
+// the reply goes to whichever app called, and a stack hands it the service's
+// paths and code layout. method() logs the stack on the device. (mojoservice
+// put the stack here.) Anything that is not an Error is as it always was.
 function exception(e) {
 	const out = {
 		errorText: e && e.message,
 		errorCode: e && e.errorCode,
-		exception: e && e.stack ? e.stack : String(e),
+		exception: e && e.stack ? Error.prototype.toString.call(e) : String(e),
 		returnValue: false
 	};
 	if (out.errorCode === undefined) {
