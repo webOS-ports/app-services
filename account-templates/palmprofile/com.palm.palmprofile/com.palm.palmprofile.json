@@ -12,7 +12,8 @@
     "writePermissions": [
 		"com.palm.accountservices",
 		"com.palm.app.firstuse",
-		"org.webosports.app.firstuse"
+		"org.webosports.app.firstuse",
+		"org.webosports.service.communityaccount"
 		],
 	"capabilityProviders": [
 		{
