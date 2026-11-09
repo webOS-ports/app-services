@@ -366,3 +366,105 @@ test('downloadHeaders: only Cookie and Authorization, one line each', () => {
 	assert.equal(downloadHeaders({Cookie: 5}), null);
 	assert.equal(downloadHeaders({Cookie: 'x'.repeat(8193)}), null);
 });
+
+// --- a listing that takes longer than a call (providers.js, continuable) ---------------------
+
+const {callProvider} = require('../lib/providers');
+
+// A bus whose answers are `script`, one per call: an object, or 'hang' (no answer: a timeout)
+function scriptedBus(script) {
+	const calls = [];
+	return {
+		calls,
+		call(uri, params, {timeoutMs}) {
+			calls.push({uri, params, timeoutMs});
+			const next = script.length > 1 ? script.shift() : script[0];
+			if (next === 'hang') {
+				return Promise.reject(new Error(`${uri}: no answer in ${timeoutMs} ms`));
+			}
+			return Promise.resolve(typeof next === 'function' ? next(params) : next);
+		}
+	};
+}
+const CAP = {serviceName: 'com.palm.service.pigallery2'};
+const QUICK = {pollGapMs: 0, attempts: 3, timeoutMs: 50};
+
+test('continuable: asked again with the jobId while pending, until the result', async () => {
+	const progress = [];
+	const bus = scriptedBus([
+		{returnValue: true, pending: true, jobId: 'j1'},
+		{returnValue: true, pending: true, jobId: 'j1', progress: {folders: 250}},
+		{returnValue: true, albums: [{aid: 'a'}]}
+	]);
+	const r = await callProvider(bus, CAP, 'listAlbums', {accountId: 'acc'},
+		Object.assign({continuable: true, onProgress: p => progress.push(p)}, QUICK));
+	assert.deepEqual(r.albums, [{aid: 'a'}]);
+	assert.deepEqual(bus.calls.map(c => c.params), [
+		{accountId: 'acc', continuable: true},
+		{accountId: 'acc', continuable: true, jobId: 'j1'},
+		{accountId: 'acc', continuable: true, jobId: 'j1'}
+	]);
+	assert.deepEqual(progress, [{folders: 250}]);
+});
+
+test('continuable: a call with no answer is tried again with the jobId; attempts counts failures in a row', async () => {
+	const bus = scriptedBus([
+		{returnValue: true, pending: true, jobId: 'j1'}, 'hang', 'hang',
+		{returnValue: true, pending: true, jobId: 'j1'}, 'hang', 'hang',
+		{returnValue: true, photos: []}
+	]);
+	const r = await callProvider(bus, CAP, 'listPhotos', {aid: 'x'}, Object.assign({continuable: true}, QUICK));
+	assert.deepEqual(r.photos, []);
+	assert.ok(bus.calls.slice(1).every(c => c.params.jobId === 'j1'), 'the work is not started again');
+
+	const failing = scriptedBus([{returnValue: true, pending: true, jobId: 'j1'}, 'hang']);
+	await assert.rejects(callProvider(failing, CAP, 'listPhotos', {aid: 'x'}, Object.assign({continuable: true}, QUICK)),
+		/no answer/);
+	assert.equal(failing.calls.length, 4, 'one pending, then three failures in a row');
+});
+
+test('continuable: a lost job is asked for once more from the start; a failed one starts again', async () => {
+	const bus = scriptedBus([
+		{returnValue: true, pending: true, jobId: 'j1'},
+		{returnValue: false, errorCode: 'JOB_UNKNOWN', errorText: 'no job j1'},
+		{returnValue: true, pending: true, jobId: 'j2'},
+		{returnValue: false, errorCode: 'PIGALLERY2_API_ERROR', errorText: 'folder unreadable'},
+		{returnValue: true, albums: []}
+	]);
+	const r = await callProvider(bus, CAP, 'listAlbums', {accountId: 'acc'}, Object.assign({continuable: true}, QUICK));
+	assert.deepEqual(r.albums, []);
+	assert.deepEqual(bus.calls.map(c => c.params.jobId), [undefined, 'j1', undefined, 'j2', undefined]);
+
+	const lostTwice = scriptedBus([{returnValue: true, pending: true, jobId: 'j1'},
+		{returnValue: false, errorCode: 'JOB_UNKNOWN', errorText: 'gone'}]);
+	await assert.rejects(callProvider(lostTwice, CAP, 'listAlbums', {}, Object.assign({continuable: true}, QUICK)), /gone/);
+});
+
+test('continuable: given up after limitMs in all, and when the sync is stopped', async () => {
+	let t = 0;
+	const pending = scriptedBus([p => {
+		t += 10 * 60 * 1000;
+		return {returnValue: true, pending: true, jobId: 'j1'};
+	}]);
+	await assert.rejects(callProvider(pending, CAP, 'listAlbums', {}, Object.assign({continuable: true, now: () => t}, QUICK)),
+		/not done in 30 min/);
+	assert.equal(pending.calls.length, 4);
+
+	const controller = new AbortController();
+	const stopping = scriptedBus([() => {
+		controller.abort(new Error('sync stopped'));
+		return {returnValue: true, pending: true, jobId: 'j1'};
+	}]);
+	await assert.rejects(callProvider(stopping, CAP, 'listAlbums', {},
+		Object.assign({continuable: true, signal: controller.signal}, QUICK, {pollGapMs: 10000})), /sync stopped/);
+});
+
+test('continuable: a connector from before jobs answers in one call, and without continuable nothing changes', async () => {
+	const old = scriptedBus([p => ({returnValue: true, albums: [{aid: String(p.continuable)}]})]);
+	assert.deepEqual((await callProvider(old, CAP, 'listAlbums', {}, Object.assign({continuable: true}, QUICK))).albums,
+		[{aid: 'true'}]);
+	const plain = scriptedBus([{returnValue: true, pending: true, jobId: 'j1'}]);
+	const r = await callProvider(plain, CAP, 'upload', {path: '/p'}, QUICK);
+	assert.equal(r.pending, true, 'a call that did not ask for a job is answered as it was');
+	assert.deepEqual(plain.calls[0].params, {path: '/p'});
+});

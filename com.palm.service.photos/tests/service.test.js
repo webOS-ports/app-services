@@ -1536,3 +1536,31 @@ test('HEIC: a device photo copied to a cloud album goes up as it is; the copy ke
 	assert.ok(!fs.existsSync(path.join(album.path, 'IMG_5.HEIC')) && !fs.existsSync(path.join(album.path, 'IMG_5.heic')));
 	assert.deepEqual(heif.decoded.slice(-1), ['IMG_5.heic']);
 });
+
+test('a listing that takes longer than a call: asked after with its jobId until the albums and photos come', async t => {
+	const {bus, svc, sync} = setup(t);
+	await svc.start();
+	// A connector that works on: pending twice for each listing, then the answer
+	for (const method of ['listAlbums', 'listPhotos']) {
+		const answer = bus.providers[SVC][method];
+		const jobs = new Map();
+		bus.providers[SVC][method] = p => {
+			assert.equal(p.continuable, true, `${method} says it can come back`);
+			const key = p.aid || '';
+			if (p.jobId === undefined) {
+				jobs.set(key, 0);
+				return {returnValue: true, pending: true, jobId: `j-${key}`, progress: {folders: 1}};
+			}
+			assert.equal(p.jobId, `j-${key}`);
+			const n = jobs.get(key) + 1;
+			jobs.set(key, n);
+			return n < 2 ? {returnValue: true, pending: true, jobId: p.jobId, progress: {folders: 1 + n}} : answer(p);
+		};
+	}
+	const r = await sync();
+	assert.equal(r.returnValue, true, JSON.stringify(r));
+	assert.equal(albumsOf(bus, 'acct1').length, 2);
+	assert.equal(photosOf(bus, 'acct1').length, 3);
+	const firsts = bus.callsTo(SVC, 'listAlbums').filter(c => c.params.jobId === undefined);
+	assert.equal(firsts.length, 1, 'the album listing was started once');
+});
