@@ -112,6 +112,17 @@ These things deliberately differ from the old service:
   error rather than mojoservice's.
 - The template schemas are read once for each time the templates are read.
 - `__quit` is kept (stark.files calls it); `__info` and `__gc` are not.
+- One profile account after a restore. First use always leaves a
+  `com.palm.palmprofile` account, and a restore puts the backed-up one back
+  under its own `_id` and deletes nothing, so the old service ended up with
+  two, the restored contacts pointing at the old one. The profile accounts
+  made on the device are listed in
+  `/var/luna/preferences/accounts-profiles-made-here.json` (next to the
+  first-use flag, outside db8, so no restore brings back another device's
+  list). `restoreCompleted` keeps the one profile that is not on that list,
+  deletes the ones that are (as `deleteAccount` does), and moves a name
+  signed in to here over to it. When it cannot tell which one came from the
+  backup it changes nothing and logs it.
 
 Tests
 -------
