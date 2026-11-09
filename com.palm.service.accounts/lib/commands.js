@@ -17,6 +17,7 @@
 */
 
 const fs = require('fs');
+const path = require('path');
 const _ = require('./under');
 const {mapReduce} = require('./palmcall');
 const M = require('./model');
@@ -28,6 +29,12 @@ const KIND = M.KIND;
 const SYNCSTATE = 'com.palm.account.syncstate:1';
 const PROFILE = 'com.palm.palmprofile';
 const FLAG = '/var/luna/preferences/first-use-profile-created';
+// The profile accounts made on this device, kept next to FLAG: outside db8,
+// so a restore cannot put back another device's list over it.
+const MADE_HERE = 'accounts-profiles-made-here.json';
+const MADE_HERE_MAX = 16;
+// The name createLocalAccount gives a profile nobody signed in to.
+const LOCAL_NAME = 'LuneOS';
 
 // services.json's commandTimeout of each method, in seconds (60 for the others).
 const TIMEOUTS = {
@@ -69,6 +76,49 @@ function TransportError(failed) {
 
 function createCommands({db, pc, keystore, templates, reloadTemplates, log = console, flagPath = FLAG}) {
 	const getTemplates = () => templates();
+	const madeHerePath = path.join(path.dirname(flagPath), MADE_HERE);
+
+	/*
+		Which profile accounts were made on this device. A restore puts the
+		backed-up profile back under its own _id and deletes nothing, so after
+		first use and a restore there are two: the one first use made, empty,
+		and the one the restored contacts and calendars point at. db8 cannot
+		tell them apart - both are plain account objects, and the clock may not
+		have been set when first use made its one - so this list does.
+	*/
+	function profilesMadeHere() {
+		try {
+			const ids = JSON.parse(fs.readFileSync(madeHerePath, 'utf8'));
+			return Array.isArray(ids) ? ids.filter(id => typeof id === 'string') : [];
+		} catch (e) {
+			if (e.code !== 'ENOENT') {
+				log.warn('could not read ' + madeHerePath + ': ' + e.message);
+			}
+			return [];
+		}
+	}
+
+	// Written whole to a new file and renamed over the old, so a reader never sees half of it.
+	function setProfilesMadeHere(ids) {
+		const temp = madeHerePath + '.' + process.pid + '.tmp';
+		try {
+			fs.writeFileSync(temp, JSON.stringify(ids.slice(-MADE_HERE_MAX)), {mode: 0o600, flag: 'w'});
+			fs.renameSync(temp, madeHerePath);
+		} catch (e) {
+			log.error('could not write ' + madeHerePath + ': ' + e.message);
+			try {
+				fs.unlinkSync(temp);
+			} catch (ignored) { /* not there */ }
+		}
+	}
+
+	function rememberProfileMadeHere(id) {
+		const ids = profilesMadeHere();
+		if (ids.indexOf(id) === -1) {
+			ids.push(id);
+			setProfilesMadeHere(ids);
+		}
+	}
 
 	// Utils.saveCredentials: each named set of credentials stored; the first failure fails it.
 	function saveCredentials(accountId, credentials) {
@@ -267,6 +317,9 @@ function createCommands({db, pc, keystore, templates, reloadTemplates, log = con
 
 		const put = await db.put([account]);
 		account._id = put.results[0].id;
+		if (account.templateId === PROFILE) {
+			rememberProfileMadeHere(account._id);
+		}
 		await saveCredentials(account._id, credentials);
 
 		// Kick off the transports' onCreate / onEnabled in the background, and answer now.
@@ -685,13 +738,57 @@ function createCommands({db, pc, keystore, templates, reloadTemplates, log = con
 		return {};
 	}
 
+	/*
+		One profile account after a restore. When there are two or more and
+		exactly one of them was not made here, that one came from the backup:
+		it is kept, as what the restored data points at, and the ones made here
+		are deleted the way deleteAccount deletes (their transports told, their
+		keys gone). A name signed in to here, not the local default, goes over to
+		the one kept. Anything else - no record, or two from the backup - is left
+		as it is and logged: guessing could delete the profile that holds the
+		data. Answers the ids it deletes.
+	*/
+	async function keepRestoredProfile(accounts) {
+		const profiles = accounts.filter(a => a.templateId === PROFILE && !a.beingDeleted && !a._del);
+		if (profiles.length < 2) {
+			return [];
+		}
+		const madeHere = profilesMadeHere();
+		const local = profiles.filter(a => madeHere.indexOf(a._id) !== -1);
+		const restored = profiles.filter(a => madeHere.indexOf(a._id) === -1);
+		if (restored.length !== 1 || local.length === 0) {
+			log.warn('restoreCompleted: ' + profiles.length + ' profile accounts, ' + local.length +
+				' of them made here; left as they are');
+			return [];
+		}
+		const keep = restored[0];
+		const signedIn = local.find(a => a.username && a.username !== LOCAL_NAME);
+		const merge = {_id: keep._id};
+		if (signedIn && signedIn.username !== keep.username) {
+			merge.username = signedIn.username;
+		}
+		// The ones made here leave the lists first, so nothing shows two profiles meanwhile.
+		await db.merge(local.map(a => ({_id: a._id, beingDeleted: true, keepData: false})));
+		if (merge.username) {
+			await db.merge([merge]);
+		}
+		setProfilesMadeHere([keep._id]);
+		for (const a of local) {
+			log.log('restoreCompleted: keeping the restored profile account ' + keep._id + ', deleting ' + a._id);
+			pc.fire(SELF + 'notifyAccountDeleted', '', {accountId: a._id, keepData: false});
+		}
+		return local.map(a => a._id);
+	}
+
 	// ---- restoreCompleted, accountsChanged (handlers/restore-completed.js)
 	async function restoreCompleted() {
 		log.log('RestoreCompletedCommandAssistant');
 		const list = getTemplates();
 		const toCall = [];
 		const all = await db.find({from: KIND});
-		const accounts = all.results;
+		// The profile accounts made here that a restore made surplus are on their way out, and set up for nothing.
+		const surplus = await keepRestoredProfile(all.results);
+		const accounts = all.results.filter(a => surplus.indexOf(a._id) === -1);
 
 		// onCapabilitiesChanged and onEnabled for every account, so the transports set up their syncs.
 		let i = accounts.length;
@@ -777,7 +874,7 @@ function createCommands({db, pc, keystore, templates, reloadTemplates, log = con
 	async function createLocalAccount() {
 		const r = await pc.call('palm://com.palm.service.accounts', 'listAccounts', {templateId: PROFILE});
 		if (r.results.length === 0) {
-			makeLocalAccount('LuneOS');
+			makeLocalAccount(LOCAL_NAME);
 			return {returnValue: true, accountCreated: true};
 		}
 		// The profile is already there - made during first use by signing in to
